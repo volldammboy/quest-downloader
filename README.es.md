@@ -12,7 +12,7 @@ con sus portadas, busca en el catálogo de la Meta Quest Store y descarga juegos
 - Interfaz en **español e inglés** (auto según la configuración regional de Windows,
   cambiable en el menú *Idioma*).
 - Los tokens de la cuenta se protegen con DPAPI de Windows; el inicio de sesión es local
-  vía SSO con Microsoft Edge.
+  en tu navegador predeterminado (Chromium o Firefox, Edge como alternativa).
 
 ## Instalación
 
@@ -67,7 +67,7 @@ El binario queda en `target\release\QD.exe`. El icono sale de `assets/icon.ico`
 ```text
 src/
   main.rs       Interfaz (egui) + diálogo de descarga + i18n
-  meta_auth.rs  SSO de Meta (Edge), biblioteca, plan APK+datos, DPAPI
+  meta_auth.rs  SSO de Meta (navegador predeterminado), biblioteca, plan APK+datos, DPAPI
   oculusdb.rs   Catálogo público + portadas
   downloader.rs Descargas reanudables multihilo
   store.rs      Persistencia SQLite (biblioteca, ajustes)
@@ -79,8 +79,8 @@ assets/         Icono de la aplicación (.ico/.png)
 
 ### Error 500 al sincronizar la biblioteca
 
-Si la sincronización falla con error 500 (puede pasar con bibliotecas muy grandes,
-unos 500+ juegos), deja la cuenta vinculada y añade los juegos uno por uno desde la
+Si la sincronización falla con error 500 (puede pasar con bibliotecas muy grandes),
+deja la cuenta vinculada y añade los juegos uno por uno desde la
 sección **Tienda** (buscar → *Añadir a la biblioteca*).
 
 ## Aviso

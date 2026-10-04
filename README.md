@@ -10,7 +10,7 @@ the Meta Quest Store catalog, and download games (APK + data/OBBs + optional lan
 - Three sections: **Library**, **Store**, **Downloads**.
 - Interface in **English and Spanish** (auto-selected from Windows regional settings,
   switchable in the *Language* menu).
-- Account tokens are protected with Windows DPAPI; sign-in runs locally via Microsoft Edge SSO.
+- Account tokens are protected with Windows DPAPI; sign-in runs locally in your default browser (Chromium or Firefox, Edge as fallback).
 
 ## Installation
 
@@ -65,7 +65,7 @@ The binary lands at `target\release\QD.exe`. The application icon comes from
 ```text
 src/
   main.rs       UI (egui) + download dialog + i18n
-  meta_auth.rs  Meta SSO sign-in (Edge), library, APK+data plan, DPAPI
+  meta_auth.rs  Meta SSO sign-in (default browser), library, APK+data plan, DPAPI
   oculusdb.rs   Public store catalog + covers
   downloader.rs Resumable multi-threaded downloads
   store.rs      SQLite persistence (library, settings)
@@ -78,7 +78,7 @@ assets/         Application icon (.ico/.png)
 ### Error 500 when syncing the library
 
 If syncing the library fails with a 500 error (it can happen with very large
-libraries, around 500+ items), keep the account linked and add the games one by
+libraries), keep the account linked and add the games one by
 one from the **Store** section (search → *Add to library*).
 
 ## Disclaimer
