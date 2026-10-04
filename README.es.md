@@ -75,6 +75,14 @@ icons/          Iconos de la interfaz (descarga, globo)
 assets/         Icono de la aplicación (.ico/.png)
 ```
 
+## Problemas conocidos
+
+### Error 500 al sincronizar la biblioteca
+
+Si la sincronización falla con error 500 (puede pasar con bibliotecas muy grandes,
+unos 500+ juegos), deja la cuenta vinculada y añade los juegos uno por uno desde la
+sección **Tienda** (buscar → *Añadir a la biblioteca*).
+
 ## Aviso
 
 Proyecto comunitario no oficial. Sin afiliación ni respaldo de Meta. Todo el contenido
