@@ -1,0 +1,19 @@
+# Rust
+target/
+
+# App runtime (portable dirs next to the exe)
+/data/
+/Downloads/
+/datos/
+/Descargas/
+
+# Local tests
+Prueba/
+
+# OS / editor
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
+*.orig
+*.rej
