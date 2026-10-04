@@ -622,7 +622,7 @@ fn free_port() -> std::io::Result<u16> {
     Ok(s.local_addr()?.port())
 }
 
-fn edge_path() -> Result<String, String> {
+pub(crate) fn edge_path() -> Result<String, String> {
     for p in [
         r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
         r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
@@ -631,16 +631,21 @@ fn edge_path() -> Result<String, String> {
             return Ok(p.to_string());
         }
     }
-    Err("Instala Microsoft Edge para vincular la cuenta.".into())
+    Err(m(
+        &crate::cur_lang(),
+        "Instala Microsoft Edge para vincular la cuenta.",
+        "Install Microsoft Edge to link the account.",
+    )
+    .into())
 }
 
 // Cliente websocket mínimo (solo texto) para las DevTools de Edge.
-struct Ws {
-    stream: TcpStream,
+pub(crate) struct Ws {
+    pub(crate) stream: TcpStream,
 }
 
 impl Ws {
-    fn connect(host: &str, port: u16, path: &str) -> Result<Self, String> {
+    pub(crate) fn connect(host: &str, port: u16, path: &str) -> Result<Self, String> {
         use std::collections::hash_map::DefaultHasher;
         let key = {
             use std::hash::{Hash, Hasher};
@@ -674,7 +679,7 @@ impl Ws {
         Ok(Self { stream })
     }
 
-    fn send_text(&mut self, text: &str) -> Result<(), String> {
+    pub(crate) fn send_text(&mut self, text: &str) -> Result<(), String> {
         let data = text.as_bytes();
         let mut frame = vec![0x81u8];
         // Máscara obligatoria del cliente.
@@ -697,7 +702,7 @@ impl Ws {
         self.stream.write_all(&frame).map_err(|e| e.to_string())
     }
 
-    fn recv_text(&mut self) -> Result<String, String> {
+    pub(crate) fn recv_text(&mut self) -> Result<String, String> {
         let mut out = vec![];
         loop {
             let (fin, opcode, payload) = self.recv_frame()?;
@@ -781,7 +786,7 @@ fn end_of_headers(buf: &[u8]) -> bool {
     buf.windows(4).any(|w| w == b"\r\n\r\n")
 }
 
-fn wait_callback(port: u16, deadline: std::time::Instant) -> Result<String, String> {
+pub(crate) fn wait_callback(port: u16, deadline: std::time::Instant) -> Result<String, String> {
     let http = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(2))
         .build()
@@ -981,22 +986,13 @@ pub fn sign_in() -> Result<String, String> {
         enc(etoken)
     );
     let port = free_port().map_err(|e| e.to_string())?;
-    let profile = std::env::temp_dir().join(format!("mqm-meta-signin-{}", std::process::id()));
+    let profile = std::env::temp_dir().join(format!("qd-meta-signin-{}", std::process::id()));
     std::fs::create_dir_all(&profile).ok();
-    let mut edge = std::process::Command::new(edge_path()?)
-        .arg(format!("--remote-debugging-port={port}"))
-        .arg(format!("--user-data-dir={}", profile.display()))
-        .arg("--no-first-run")
-        .arg("--new-window")
-        .arg(&confirm)
-        .spawn()
-        .map_err(|e| format!("No se pudo abrir Edge: {e}"))?;
-    let deadline = std::time::Instant::now() + Duration::from_secs(600);
-    let callback = wait_callback(port, deadline);
-    let _ = edge.kill();
+    // Login en el navegador predeterminado (Chromium, Firefox o Edge).
+    let (mut child, callback) = crate::browser::login(&confirm, port, &profile)?;
+    let _ = child.kill();
     std::thread::sleep(Duration::from_secs(1));
     std::fs::remove_dir_all(&profile).ok();
-    let callback = callback?;
     let qs = callback.split_once('?').map(|(_, q)| q).unwrap_or("");
     let expected = &sha256_hex(challenge.as_bytes())[..16];
     if parse_query(qs, "token") != expected {

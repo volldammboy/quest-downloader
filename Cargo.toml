@@ -15,7 +15,7 @@ reqwest = { version = "0.13", features = ["blocking", "json", "form"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 image = "0.25"
 tungstenite = "0.26"
-windows = { version = "0.58", features = ["Win32_Security_Cryptography", "Win32_Foundation", "Win32_Globalization"] }
+windows = { version = "0.58", features = ["Win32_Security_Cryptography", "Win32_Foundation", "Win32_Globalization", "Win32_System_Registry"] }
 
 [build-dependencies]
 winres = "0.1"

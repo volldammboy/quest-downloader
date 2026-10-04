@@ -2,6 +2,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod browser;
 mod downloader;
 mod meta_auth;
 mod oculusdb;
@@ -715,6 +716,7 @@ fn tr(lang: &str, es: &str) -> String {
         "Total" => "Total",
         "más" => "more",
         "Sin descarga" => "No download",
+        "No se pudo abrir el navegador" => "Could not open the browser",
         "Sin nombre" => "Unnamed",
         "Gratis" => "Free",
         "en cola" => "queued",
