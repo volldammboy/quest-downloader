@@ -12,6 +12,10 @@ the Meta Quest Store catalog, and download games (APK + data/OBBs + optional lan
   switchable in the *Language* menu).
 - Account tokens are protected with Windows DPAPI; sign-in runs locally in your default browser (Chromium or Firefox, Edge as fallback).
 
+## Screenshots
+
+![QD library (English)](docs/screenshot-en.png)
+
 ## Installation
 
 1. Get `QD.exe` (see *Build from source* below), or run the installer

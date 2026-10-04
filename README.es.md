@@ -14,6 +14,10 @@ con sus portadas, busca en el catálogo de la Meta Quest Store y descarga juegos
 - Los tokens de la cuenta se protegen con DPAPI de Windows; el inicio de sesión es local
   en tu navegador predeterminado (Chromium o Firefox, Edge como alternativa).
 
+## Capturas
+
+![Biblioteca de QD (español)](docs/screenshot-es.png)
+
 ## Instalación
 
 1. Consigue `QD.exe` (ver *Compilar desde el código*) o usa el instalador
