@@ -16,7 +16,8 @@ con sus portadas, busca en el catálogo de la Meta Quest Store y descarga juegos
 
 ## Instalación
 
-1. Consigue `QD.exe` (ver *Compilar desde el código*).
+1. Consigue `QD.exe` (ver *Compilar desde el código*) o usa el instalador
+   `QD-Setup-1.0.exe` (instala en `C:\Program Files\QD` por defecto).
 2. Ponlo en cualquier carpeta y ejecútalo. Nada más.
 3. En el primer arranque crea junto al ejecutable:
    - `data/` — base de datos (`data.db`), portadas en caché (`covers_v2/`) y tokens.
