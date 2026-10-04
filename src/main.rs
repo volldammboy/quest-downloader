@@ -1868,6 +1868,14 @@ fn load_icon() -> egui::IconData {
 }
 
 fn main() -> eframe::Result<()> {
+    if std::env::args().any(|a| a == "--probe-browser") {
+        match crate::browser::detect() {
+            crate::browser::DefaultBrowser::Chromium(exe) => println!("PROBE Chromium {exe}"),
+            crate::browser::DefaultBrowser::Firefox(exe) => println!("PROBE Firefox {exe}"),
+            crate::browser::DefaultBrowser::Other => println!("PROBE Other"),
+        }
+        return Ok(());
+    }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1100.0, 700.0])
