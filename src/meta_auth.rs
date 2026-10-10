@@ -33,6 +33,10 @@ fn log_path() -> std::path::PathBuf {
     crate::store::app_dir().join("meta.log")
 }
 
+fn exe_log_path() -> std::path::PathBuf {
+    crate::store::base_dir().join("qd.log")
+}
+
 pub fn log(step: &str, status: &str, code: &str) {
     let line = format!(
         "{} | {} | http={} | code={}\n",
@@ -41,16 +45,28 @@ pub fn log(step: &str, status: &str, code: &str) {
         status,
         code
     );
-    if let Some(p) = log_path().parent() {
-        std::fs::create_dir_all(p).ok();
+    // Primero junto al ejecutable; si no se puede escribir (p. ej.
+    // `C:\Program Files` sin admin), en la carpeta de datos.
+    let mut done = append_line(&exe_log_path(), &line);
+    if !done {
+        done = append_line(&log_path(), &line);
+    }
+    let _ = done;
+}
+
+fn append_line(path: &std::path::Path, line: &str) -> bool {
+    if let Some(p) = path.parent() {
+        if std::fs::create_dir_all(p).is_err() {
+            return false;
+        }
     }
     use std::io::Write as _;
     std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(log_path())
+        .open(path)
         .and_then(|mut f| f.write_all(line.as_bytes()))
-        .ok();
+        .is_ok()
 }
 
 pub fn note(step: &str, text: &str) {
