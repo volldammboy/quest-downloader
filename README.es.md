@@ -99,4 +99,4 @@ la cuenta vinculada.
 
 ## Apoyo
 
-[☕ Apóyame en Ko-fi](https://ko-fi.com/M4A0285O9U)
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/M4A0285O9U)
