@@ -11,21 +11,58 @@ pub fn base_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+fn writable(dir: &PathBuf) -> bool {
+    if std::fs::create_dir_all(dir).is_err() {
+        return false;
+    }
+    let probe = dir.join(".qd_write_test");
+    if std::fs::write(&probe, b"1").is_err() {
+        return false;
+    }
+    std::fs::remove_file(&probe).ok();
+    true
+}
+
+fn user_base() -> PathBuf {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| base_dir())
+        .join("QD")
+}
+
+/// Junto al EXE si se puede escribir; si no (p. ej. `C:\Program Files`),
+/// en `%LOCALAPPDATA%\QD`.
+pub fn portable_base() -> PathBuf {
+    use std::sync::OnceLock;
+    static BASE: OnceLock<PathBuf> = OnceLock::new();
+    BASE.get_or_init(|| {
+        let exe = base_dir();
+        if writable(&exe.join("data")) && writable(&exe.join("Downloads")) {
+            exe
+        } else {
+            user_base()
+        }
+    })
+    .clone()
+}
+
 pub fn app_dir() -> PathBuf {
-    base_dir().join("data")
+    portable_base().join("data")
 }
 
 pub fn download_dir() -> PathBuf {
-    base_dir().join("Downloads")
+    portable_base().join("Downloads")
 }
 
 /// Renombra `datos/`→`data/` y `Descargas/`→`Downloads/` conservando el contenido.
 pub fn migrate_dirs() {
-    for (old, new) in [("datos", "data"), ("Descargas", "Downloads")] {
-        let o = base_dir().join(old);
-        let n = base_dir().join(new);
-        if o.exists() && !n.exists() {
-            std::fs::rename(&o, &n).ok();
+    for base in [base_dir(), user_base()] {
+        for (old, new) in [("datos", "data"), ("Descargas", "Downloads")] {
+            let o = base.join(old);
+            let n = base.join(new);
+            if o.exists() && !n.exists() {
+                std::fs::rename(&o, &n).ok();
+            }
         }
     }
 }

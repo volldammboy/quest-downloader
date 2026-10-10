@@ -3,7 +3,7 @@
 
 #define MyAppName "Quest Downloader"
 #define MyAppExe "QD.exe"
-#define MyAppVersion "1.0"
+#define MyAppVersion "1.0.1"
 
 [Setup]
 AppName={#MyAppName}
@@ -11,7 +11,7 @@ AppVersion={#MyAppVersion}
 DefaultDirName=C:\Program Files\QD
 DisableDirPage=no
 DefaultGroupName=Quest Downloader
-OutputBaseFilename=QD-Setup-1.0
+OutputBaseFilename=QD-Setup-1.0.1
 Compression=lzma2/max
 SolidCompression=yes
 PrivilegesRequired=admin

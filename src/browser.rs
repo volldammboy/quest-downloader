@@ -322,29 +322,48 @@ pub fn login(
     let deadline = Instant::now() + Duration::from_secs(600);
     match detect() {
         DefaultBrowser::Firefox(exe) => {
+            crate::meta_auth::note("sso", &format!("navegador: Firefox {exe}"));
             match launch_firefox(&exe, port, profile) {
                 Ok(mut child) => match bidi_wait(port, deadline, confirm) {
-                    Ok(url) => Ok((child, url)),
-                    Err(_) => {
+                    Ok(url) => {
+                        crate::meta_auth::note("sso", "callback ok (Firefox)");
+                        Ok((child, url))
+                    }
+                    Err(e) => {
+                        crate::meta_auth::note("sso", &format!("BiDi fallo: {e}; reintento Edge"));
                         let _ = child.kill();
                         edge_login(confirm, port, profile, deadline)
                     }
                 },
-                Err(_) => edge_login(confirm, port, profile, deadline),
+                Err(e) => {
+                    crate::meta_auth::note("sso", &format!("lanzar Firefox fallo: {e}; reintento Edge"));
+                    edge_login(confirm, port, profile, deadline)
+                }
             }
         }
         DefaultBrowser::Chromium(exe) => {
+            crate::meta_auth::note("sso", &format!("navegador: Chromium {exe}"));
             match launch_chromium(&exe, port, profile, confirm) {
                 Ok(mut child) => match wait_callback(port, deadline) {
-                    Ok(url) => Ok((child, url)),
-                    Err(_) => {
+                    Ok(url) => {
+                        crate::meta_auth::note("sso", "callback ok (Chromium)");
+                        Ok((child, url))
+                    }
+                    Err(e) => {
+                        crate::meta_auth::note("sso", &format!("CDP fallo: {e}; reintento Edge"));
                         let _ = child.kill();
                         edge_login(confirm, port, profile, deadline)
                     }
                 },
-                Err(_) => edge_login(confirm, port, profile, deadline),
+                Err(e) => {
+                    crate::meta_auth::note("sso", &format!("lanzar Chromium fallo: {e}; reintento Edge"));
+                    edge_login(confirm, port, profile, deadline)
+                }
             }
         }
-        DefaultBrowser::Other => edge_login(confirm, port, profile, deadline),
+        DefaultBrowser::Other => {
+            crate::meta_auth::note("sso", "navegador: otro/Edge");
+            edge_login(confirm, port, profile, deadline)
+        }
     }
 }

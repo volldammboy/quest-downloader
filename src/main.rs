@@ -1874,6 +1874,7 @@ fn main() -> eframe::Result<()> {
             crate::browser::DefaultBrowser::Firefox(exe) => println!("PROBE Firefox {exe}"),
             crate::browser::DefaultBrowser::Other => println!("PROBE Other"),
         }
+        println!("PROBE base {}", crate::store::portable_base().display());
         return Ok(());
     }
     let options = eframe::NativeOptions {
