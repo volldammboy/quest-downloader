@@ -19,9 +19,9 @@ the Meta Quest Store catalog, and download games (APK + data/OBBs + optional lan
 ## Installation
 
 1. Get `QD.exe` (see *Build from source* below), or run the installer
-   `QD-Setup-1.0.1.exe` (installs to `C:\Program Files\QD` by default;
-   when installed, data and downloads live in `%LOCALAPPDATA%\QD`
-   instead of next to the executable).
+   `QD-Setup-1.0.1.exe` (installs to `C:\QD` by default, so data and
+   downloads stay next to the executable; only if installed somewhere
+   non-writable they move to `%LOCALAPPDATA%\QD`).
 2. Place it in any folder and run it. That's it.
 3. On first run it creates next to the executable:
    - `data/` — database (`data.db`), cached covers (`covers_v2/`) and account tokens.

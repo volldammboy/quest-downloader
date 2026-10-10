@@ -1,5 +1,5 @@
 ; Instalador de Quest Downloader (QD) — Inno Setup 6.
-; Ruta por defecto: C:\Program Files\QD
+; Ruta por defecto: C:\QD
 
 #define MyAppName "Quest Downloader"
 #define MyAppExe "QD.exe"
@@ -8,7 +8,7 @@
 [Setup]
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
-DefaultDirName=C:\Program Files\QD
+DefaultDirName=C:\QD
 DisableDirPage=no
 DefaultGroupName=Quest Downloader
 OutputBaseFilename=QD-Setup-1.0.1
