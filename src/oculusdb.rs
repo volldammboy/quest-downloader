@@ -27,6 +27,7 @@ pub struct StoreApp {
     pub genres: String,
     pub store_url: String,
     pub image_url: String,
+    pub platform: String, // "quest" | "rift" | ""
 }
 
 fn s(v: Option<&Value>) -> String {
@@ -98,6 +99,11 @@ pub fn search_store(query: &str, limit: usize) -> Result<Vec<StoreApp>, String> 
             genres,
             store_url,
             image_url,
+            platform: match a.get("binaryType").and_then(|v| v.as_u64()) {
+                Some(1) => "quest".into(),
+                Some(2) => "rift".into(),
+                _ => String::new(),
+            },
         });
     }
     Ok(apps)
@@ -167,7 +173,7 @@ pub fn save_json(path: &std::path::Path, app: &StoreApp) {
     let v = serde_json::json!({
         "id": app.id, "name": app.name, "package": app.package,
         "price": app.price, "size": app.size, "publisher": app.publisher,
-        "genres": app.genres, "store_url": app.store_url,
+        "genres": app.genres, "store_url": app.store_url, "platform": app.platform,
     });
     std::fs::create_dir_all(path.parent().unwrap_or(std::path::Path::new("."))).ok();
     std::fs::write(path, serde_json::to_string_pretty(&v).unwrap_or_default()).ok();

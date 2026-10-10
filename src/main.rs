@@ -4,6 +4,7 @@
 
 mod browser;
 mod downloader;
+mod server;
 mod meta_auth;
 mod oculusdb;
 mod store;
@@ -540,6 +541,7 @@ fn to_store_app(g: &store::Game) -> oculusdb::StoreApp {
         genres: g.info.get("genres").and_then(|v| v.as_str()).unwrap_or("").to_string(),
         store_url: g.store_url.clone(),
         image_url: g.info.get("image_url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        platform: g.info.get("platform").and_then(|v| v.as_str()).unwrap_or("").to_string(),
     }
 }
 
@@ -717,6 +719,9 @@ fn tr(lang: &str, es: &str) -> String {
         "más" => "more",
         "Sin descarga" => "No download",
         "No se pudo abrir el navegador" => "Could not open the browser",
+        "Servidor visor" => "Headset server",
+        "Iniciar" => "Start",
+        "Detener" => "Stop",
         "Sin nombre" => "Unnamed",
         "Gratis" => "Free",
         "en cola" => "queued",
@@ -1740,7 +1745,17 @@ impl App {
             for (i, app) in results.iter().enumerate() {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
-                        ui.label(egui::RichText::new(&app.name).strong());
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new(&app.name).strong());
+                            let (plat, col) = match app.platform.as_str() {
+                                "rift" => ("Rift PC", egui::Color32::from_rgb(255, 170, 60)),
+                                "quest" => ("Meta Quest", egui::Color32::from_rgb(120, 220, 120)),
+                                _ => ("", egui::Color32::GRAY),
+                            };
+                            if !plat.is_empty() {
+                                ui.label(egui::RichText::new(plat).small().color(col).strong());
+                            }
+                        });
                         ui.label(
                             egui::RichText::new(format!(
                                 "{} · {} · {}",
@@ -1778,7 +1793,7 @@ impl App {
                     verified_at: 0,
                 art_url: String::new(),
                             info: serde_json::json!({
-                        "genres": app.genres, "image_url": app.image_url,
+                        "genres": app.genres, "image_url": app.image_url, "platform": app.platform,
                     }),
                 };
                 store::library_add(&g);
@@ -1798,10 +1813,21 @@ impl App {
 
     fn ui_downloads(&mut self, ui: &mut egui::Ui) {
         let lang = self.lang.clone();
+        let mut srv = crate::server::status();
         ui.horizontal(|ui| {
             if ui.button(tr(&lang, "Abrir carpeta")).clicked() {
                 std::fs::create_dir_all(store::download_dir()).ok();
                 open_folder(&store::download_dir());
+            }
+            ui.separator();
+            let btn = if srv.running { tr(&lang, "Detener") } else { tr(&lang, "Iniciar") };
+            if ui.button(format!("{} {}", tr(&lang, "Servidor visor"), btn)).clicked() {
+                srv = crate::server::toggle();
+            }
+            if srv.running {
+                ui.monospace(format!("http://{}:{}  token {}", srv.ip, crate::server::PORT, srv.token));
+            } else if !srv.error.is_empty() {
+                ui.label(egui::RichText::new(&srv.error).small().color(egui::Color32::RED));
             }
         });
         let snap = self.dm.snapshot();
@@ -1875,6 +1901,12 @@ fn main() -> eframe::Result<()> {
             crate::browser::DefaultBrowser::Other => println!("PROBE Other"),
         }
         println!("PROBE base {}", crate::store::portable_base().display());
+        return Ok(());
+    }
+    if std::env::args().any(|a| a == "--probe-server") {
+        let s = crate::server::toggle();
+        println!("PROBE srv running={} {}:{} token={} err={}", s.running, s.ip, crate::server::PORT, s.token, s.error);
+        std::thread::sleep(std::time::Duration::from_secs(90));
         return Ok(());
     }
     let options = eframe::NativeOptions {
