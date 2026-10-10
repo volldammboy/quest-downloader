@@ -88,7 +88,8 @@ assets/         Icono de la aplicación (.ico/.png)
 
 Si la sincronización falla con error 500 (puede pasar con bibliotecas muy grandes),
 deja la cuenta vinculada y añade los juegos uno por uno desde la
-sección **Tienda** (buscar → *Añadir a la biblioteca*).
+sección **Tienda** (buscar → *Añadir a la biblioteca*) o descárgalos
+directamente desde la tienda.
 
 ## Aviso
 

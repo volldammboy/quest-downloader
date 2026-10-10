@@ -85,8 +85,8 @@ assets/         Application icon (.ico/.png)
 ### Error 500 when syncing the library
 
 If syncing the library fails with a 500 error (it can happen with very large
-libraries), keep the account linked and add the games one by
-one from the **Store** section (search → *Add to library*).
+libraries), keep the account linked and add the games one by one from the
+Store section (search → *Add to library*) or download directly from the store.
 
 ## Disclaimer
 
