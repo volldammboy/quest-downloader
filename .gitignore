@@ -17,3 +17,6 @@ Desktop.ini
 .idea/
 *.orig
 *.rej
+
+# Installer build output
+installer/Output/
