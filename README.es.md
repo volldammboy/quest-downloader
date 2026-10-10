@@ -96,3 +96,7 @@ directamente desde la tienda.
 Proyecto comunitario no oficial. Sin afiliación ni respaldo de Meta. Todo el contenido
 pertenece a sus propietarios y se descarga de los servidores de Meta con los derechos de
 la cuenta vinculada.
+
+## Apoyo
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/M4A0285O9U)

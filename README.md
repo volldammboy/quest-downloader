@@ -92,4 +92,8 @@ Store section (search → *Add to library*) or download directly from the store.
 
 Unofficial community project. Not affiliated with, endorsed by, or sponsored by Meta.
 All game content belongs to its respective owners and is downloaded from Meta's own servers
-under the linked account's entitlements.
+the account's entitlements.
+
+## Support
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/M4A0285O9U)
