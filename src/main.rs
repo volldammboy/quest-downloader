@@ -281,12 +281,13 @@ impl App {
             let r = (|| -> Result<Vec<meta_auth::LibGame>, String> {
                 crate::websess::login_interactive().map(|v| {
                     v.into_iter()
-                        .map(|(id, name)| meta_auth::LibGame {
+                        .map(|(id, name, cover)| meta_auth::LibGame {
                             id,
                             name,
                             package: String::new(),
                             publisher: String::new(),
                             genres: String::new(),
+                            cover,
                         })
                         .collect()
                 })
@@ -308,7 +309,7 @@ impl App {
                 store_url: format!("https://www.meta.com/experiences/p/{}", g.id),
                 owned: true,
                 verified_at: 0,
-                art_url: String::new(),
+                art_url: g.cover.clone(),
                 info: serde_json::json!({ "genres": g.genres }),
             };
             store::library_add(&game);

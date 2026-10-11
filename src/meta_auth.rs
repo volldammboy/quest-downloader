@@ -306,6 +306,7 @@ pub struct LibGame {
     pub package: String,
     pub publisher: String,
     pub genres: String,
+    pub cover: String,
 }
 
 pub fn fetch_library(token: &str) -> Result<(String, String, Vec<LibGame>), String> {
@@ -358,6 +359,7 @@ pub fn fetch_library(token: &str) -> Result<(String, String, Vec<LibGame>), Stri
                         .join(", ")
                 })
                 .unwrap_or_default(),
+            cover: String::new(),
         });
     }
     let alias = user

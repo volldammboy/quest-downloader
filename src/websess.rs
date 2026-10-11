@@ -123,8 +123,153 @@ fn eval(ws: &mut crate::meta_auth::Ws, id: &mut u32, expr: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Minimiza (o restaura) la ventana principal del navegador.
-fn show_pid(pid: u32, minimize: bool) {
+fn eval_async(ws: &mut crate::meta_auth::Ws, id: &mut u32, expr: &str) -> String {
+    *id += 1;
+    let params = serde_json::json!({"expression": expr, "awaitPromise": true, "returnByValue": true}).to_string();
+    cdp_call(ws, *id, "Runtime.evaluate", &params)
+        .ok()
+        .and_then(|v| {
+            v.get("result")
+                .and_then(|x| x.get("result"))
+                .and_then(|x| x.get("value"))
+                .and_then(|x| x.as_str())
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_default()
+}
+
+fn pct_decode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let b = s.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let (Some(h), Some(l)) = (hexv(b[i + 1]), hexv(b[i + 2])) {
+                out.push((h * 16 + l) as char);
+                i += 3;
+                continue;
+            }
+        }
+        if b[i] == b'+' {
+            out.push(' ');
+        } else {
+            out.push(b[i] as char);
+        }
+        i += 1;
+    }
+    out
+}
+
+fn hexv(c: u8) -> Option<u8> {
+    match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn pct_encode(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+/// Pagina la consulta de pedidos con fetch en la propia página (su sesión ya
+/// vale): completo en segundos, sin depender del scroll.
+fn fetch_pages(
+    ws: &mut crate::meta_auth::Ws,
+    idc: &mut u32,
+    post: &str,
+    out: &mut Vec<(String, String, String)>,
+) {
+    let mut pairs: Vec<(String, String)> = vec![];
+    for kv in post.split('&') {
+        if let Some((k, v)) = kv.split_once('=') {
+            pairs.push((pct_decode(k), pct_decode(v)));
+        }
+    }
+    let vi = match pairs.iter().position(|(k, _)| k == "variables") {
+        Some(i) => i,
+        None => return,
+    };
+    let mut vars: serde_json::Value = match serde_json::from_str(&pairs[vi].1) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    if let Some(o) = vars.as_object_mut() {
+        o.insert("first".into(), serde_json::json!(20));
+    }
+    let mut cursor: Option<String> = None;
+    for page in 0..60 {
+        if let Some(o) = vars.as_object_mut() {
+            o.insert(
+                "cursor".into(),
+                cursor.clone().map(serde_json::Value::String).unwrap_or(serde_json::Value::Null),
+            );
+        }
+        let body = pairs
+            .iter()
+            .map(|(k, v)| {
+                let val = if k == "variables" {
+                    serde_json::to_string(&vars).unwrap_or_default()
+                } else {
+                    v.clone()
+                };
+                format!("{}={}", pct_encode(k), pct_encode(&val))
+            })
+            .collect::<Vec<_>>()
+            .join("&");
+        let js_body = serde_json::to_string(&body).unwrap_or_default();
+        let expr = format!(
+            "(async () => {{ const r = await fetch('https://www.meta.com/api/graphql/', {{method:'POST', headers:{{'Content-Type':'application/x-www-form-urlencoded'}}, credentials:'include', body: {js_body}}}); return (await r.text()).slice(0, 2000000); }})()"
+        );
+        let text = eval_async(ws, idc, &expr);
+        if text.is_empty() {
+            crate::meta_auth::note("pedidos", &format!("fetch pág {page}: vacío"));
+            break;
+        }
+        let before = out.len();
+        parse_orders(&text, out);
+        crate::meta_auth::note("pedidos", &format!("fetch pág {page}: {} juegos", out.len()));
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+        let edges = v
+            .pointer("/data/node/orders_rmas_and_subscriptions/edges")
+            .and_then(|e| e.as_array());
+        let mut next: Option<String> = None;
+        if let Some(edges) = edges {
+            if edges.is_empty() {
+                break;
+            }
+            next = edges
+                .last()
+                .and_then(|e| e.get("cursor"))
+                .and_then(|x| x.as_str())
+                .map(|s| s.to_string());
+        }
+        if out.len() == before && page > 0 {
+            break;
+        }
+        match next {
+            Some(c) => cursor = Some(c),
+            None => break,
+        }
+        if out.len() >= 2000 {
+            break;
+        }
+    }
+}
+
+/// Ventana fuera de la pantalla (oculta pero visible para el sistema):
+/// la paginación sigue disparando sin molestar.
+fn hide_pid(pid: u32) {
     struct Ctx {
         pid: u32,
         hwnd: isize,
@@ -149,16 +294,23 @@ fn show_pid(pid: u32, minimize: bool) {
             LPARAM(&mut ctx as *mut Ctx as isize),
         );
         if ctx.hwnd != 0 {
-            let _ = ShowWindow(
+            let _ = SetWindowPos(
                 HWND(ctx.hwnd as *mut _),
-                if minimize { SW_MINIMIZE } else { SW_RESTORE },
+                HWND(std::ptr::null_mut()),
+                -10000,
+                0,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
             );
         }
     }
 }
 
-fn parse_orders(body: &str, out: &mut Vec<(String, String)>) {
-    if !(body.contains("app_store_item") || body.contains("orders_rmas")) {
+/// Un pedido = nodo con `app_store_item` + `status`.
+/// Solo juegos completos (`XSHOCApplication`), sin cancelados ni DLCs/bundles.
+fn parse_orders(body: &str, out: &mut Vec<(String, String, String)>) {
+    if !body.contains("app_store_item") {
         return;
     }
     let v: serde_json::Value = match serde_json::from_str(body) {
@@ -169,14 +321,25 @@ fn parse_orders(body: &str, out: &mut Vec<(String, String)>) {
     while let Some(cur) = stack.pop() {
         match cur {
             serde_json::Value::Object(m) => {
-                if let Some(item) = m.get("app_store_item") {
-                    let id = item.get("id").and_then(|x| x.as_str()).unwrap_or("");
-                    let name = item
-                        .get("display_name")
-                        .and_then(|x| x.as_str())
-                        .unwrap_or("");
-                    if !id.is_empty() && !out.iter().any(|(i, _)| i == id) {
-                        out.push((id.to_string(), name.to_string()));
+                if let (Some(item), Some(status)) =
+                    (m.get("app_store_item"), m.get("status").and_then(|x| x.as_str()))
+                {
+                    let skip = matches!(status, "CANCELED" | "REFUNDED" | "REVERSED" | "FAILED");
+                    let ty = item.get("__typename").and_then(|x| x.as_str()).unwrap_or("");
+                    if !skip && ty == "XSHOCApplication" {
+                        let id = item.get("id").and_then(|x| x.as_str()).unwrap_or("");
+                        let name = item
+                            .get("display_name")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("");
+                        let cover = item
+                            .get("icon_image")
+                            .and_then(|x| x.get("uri"))
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("");
+                        if !id.is_empty() && !out.iter().any(|(i, _, _)| i == id) {
+                            out.push((id.to_string(), name.to_string(), cover.to_string()));
+                        }
                     }
                 }
                 for (_, val) in m {
@@ -193,8 +356,30 @@ fn parse_orders(body: &str, out: &mut Vec<(String, String)>) {
     }
 }
 
+/// postData de la consulta de pedidos (para paginarla por fetch en página).
+static QUERY: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
+    std::sync::OnceLock::new();
+
+fn save_query(s: &str) {
+    let mut q = QUERY
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock()
+        .unwrap();
+    if q.is_none() {
+        *q = Some(s.to_string());
+    }
+}
+
+fn take_query() -> Option<String> {
+    QUERY
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock()
+        .unwrap()
+        .take()
+}
+
 /// Recoge respuestas de pedidos durante `secs` segundos.
-fn drain(ws: &mut crate::meta_auth::Ws, idc: &mut u32, secs: u64, out: &mut Vec<(String, String)>, stat: &mut (u32, u32, u32)) {
+fn drain(ws: &mut crate::meta_auth::Ws, idc: &mut u32, secs: u64, out: &mut Vec<(String, String, String)>, stat: &mut (u32, u32, u32)) {
     let t0 = Instant::now();
     let mut wanted: Vec<(String, String)> = vec![]; // (requestId, método+url)
     loop {
@@ -228,6 +413,18 @@ fn drain(ws: &mut crate::meta_auth::Ws, idc: &mut u32, secs: u64, out: &mut Vec<
                     .unwrap_or("?");
                 wanted.push((rid.to_string(), format!("{m} {url}")));
                 stat.0 += 1;
+                // Guarda el cuerpo de la consulta de datos para paginarla luego.
+                if url.contains("api/graphql") {
+                    if let Some(pd) = params
+                        .get("request")
+                        .and_then(|r| r.get("postData"))
+                        .and_then(|x| x.as_str())
+                    {
+                        if pd.contains("SubscriptionsQuery") {
+                            save_query(pd);
+                        }
+                    }
+                }
             }
         } else if method == "Network.responseReceived" {
             let rid = params.get("requestId").and_then(|x| x.as_str()).unwrap_or("");
@@ -278,8 +475,8 @@ fn drain(ws: &mut crate::meta_auth::Ws, idc: &mut u32, secs: u64, out: &mut Vec<
     }
 }
 
-/// Espera login en pedidos, minimiza la ventana, autoscroll y captura (id, nombre).
-pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String)>, String> {
+/// Espera login en pedidos, oculta la ventana y captura (id, nombre, portada).
+pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String, String)>, String> {
     let deadline = Instant::now() + Duration::from_secs(900);
     let (mut ws, here) = page_ws(port, Instant::now() + Duration::from_secs(60))?;
     pending().clear();
@@ -304,18 +501,16 @@ pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String)>, Stri
         std::thread::sleep(Duration::from_secs(3));
     }
     crate::meta_auth::note("pedidos", "lista visible, capturando");
-    let hidden = pid != 0;
-    if hidden {
-        show_pid(pid, true);
+    if pid != 0 {
+        hide_pid(pid);
     }
-    let mut out: Vec<(String, String)> = vec![];
+    let mut out: Vec<(String, String, String)> = vec![];
     let mut stat = (0u32, 0u32, 0u32);
     // La primera página ya voló durante la espera: recarga sin caché y captúrala.
     let _ = cdp_call(&mut ws, 50, "Page.reload", r#"{"ignoreCache":true}"#);
     drain(&mut ws, &mut idc, 8, &mut out, &mut stat);
     let mut quiet = 0u32;
-    let mut restored = false;
-    for i in 0..150 {
+    for _ in 0..150 {
         if Instant::now() > deadline {
             break;
         }
@@ -335,19 +530,14 @@ pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String)>, Stri
         } else {
             quiet = 0;
         }
-        // Minimizada la paginación puede no disparar: restaura y sigue visible.
-        if hidden && !restored && quiet >= 3 {
-            restored = true;
-            show_pid(pid, false);
-            quiet = 0;
-            // Vuelve arriba: re-dispara la paginación desde cero.
-            eval(&mut ws, &mut idc, "window.scrollTo(0, 0)");
-            std::thread::sleep(Duration::from_secs(1));
-            crate::meta_auth::note("pedidos", "ventana restaurada, sigue visible");
-        }
         if quiet >= 5 {
             break;
         }
+    }
+    // Remate por fetch en página: trae TODO lo que falte, sin scroll.
+    if let Some(post) = take_query() {
+        crate::meta_auth::note("pedidos", &format!("paginando por fetch ({} enviados)", post.len()));
+        fetch_pages(&mut ws, &mut idc, &post, &mut out);
     }
     crate::meta_auth::note(
         "pedidos",
@@ -357,7 +547,7 @@ pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String)>, Stri
 }
 
 /// Login web interactivo (bypass manual del error 500).
-pub fn login_interactive() -> Result<Vec<(String, String)>, String> {
+pub fn login_interactive() -> Result<Vec<(String, String, String)>, String> {
     let port = {
         let s = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
         s.local_addr().map_err(|e| e.to_string())?.port()
