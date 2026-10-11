@@ -720,6 +720,7 @@ fn tr(lang: &str, es: &str) -> String {
         "Sin descarga" => "No download",
         "No se pudo abrir el navegador" => "Could not open the browser",
         "Servidor visor" => "Headset server",
+        "Comprado" => "Purchased",
         "Iniciar" => "Start",
         "Detener" => "Stop",
         "Sin nombre" => "Unnamed",
@@ -1741,6 +1742,12 @@ impl App {
         });
         let results = std::mem::take(&mut self.results);
         let mut action: Option<(usize, bool)> = None; // (idx, descargar?)
+        let owned: std::collections::HashSet<&str> = self
+            .library
+            .iter()
+            .filter(|g| g.owned)
+            .map(|g| g.id.as_str())
+            .collect();
         egui::ScrollArea::vertical().show(ui, |ui| {
             for (i, app) in results.iter().enumerate() {
                 ui.horizontal(|ui| {
@@ -1756,13 +1763,22 @@ impl App {
                                 ui.label(egui::RichText::new(plat).small().color(col).strong());
                             }
                         });
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "{} · {} · {}",
-                                app.price, app.size, app.publisher
-                            ))
-                            .small(),
-                        );
+                        if owned.contains(app.id.as_str()) {
+                            ui.label(
+                                egui::RichText::new(tr(&lang, "Comprado"))
+                                    .small()
+                                    .color(egui::Color32::from_rgb(120, 220, 120))
+                                    .strong(),
+                            );
+                        } else {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "{} · {} · {}",
+                                    app.price, app.size, app.publisher
+                                ))
+                                .small(),
+                            );
+                        }
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button(tr(&lang, "Abrir en la Store")).clicked() {
