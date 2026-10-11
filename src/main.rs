@@ -328,23 +328,24 @@ impl App {
         let mut n = 0usize;
         for g in games {
             let name = if g.name.is_empty() { "?".into() } else { g.name.clone() };
-            if !known.insert(norm_name(&name)) {
-                continue;
+            let is_new = known.insert(norm_name(&name));
+            if is_new {
+                store::library_add(&store::Game {
+                    id: g.id.clone(),
+                    name,
+                    package: g.package.clone(),
+                    price: String::new(),
+                    size: String::new(),
+                    publisher: g.publisher.clone(),
+                    store_url: format!("https://www.meta.com/experiences/p/{}", g.id),
+                    owned: true,
+                    verified_at: 0,
+                    art_url: g.cover.clone(),
+                    info: serde_json::json!({ "genres": g.genres, "platform": "" }),
+                });
+                n += 1;
             }
-            store::library_add(&store::Game {
-                id: g.id.clone(),
-                name,
-                package: g.package.clone(),
-                price: String::new(),
-                size: String::new(),
-                publisher: g.publisher.clone(),
-                store_url: format!("https://www.meta.com/experiences/p/{}", g.id),
-                owned: true,
-                verified_at: 0,
-                art_url: g.cover.clone(),
-                info: serde_json::json!({ "genres": g.genres, "platform": "" }),
-            });
-            n += 1;
+            store::library_set_owned(&g.id, true);
         }
         n
     }
@@ -475,9 +476,6 @@ impl App {
             }
             // 2) Plataforma de lo listado (los Rift se quedan con etiqueta PCVR).
             for g in store::library_all() {
-                if !g.owned {
-                    continue;
-                }
                 let plat = g.info.get("platform").and_then(|v| v.as_str()).unwrap_or("");
                 if plat.is_empty() {
                     if let Some(it) = oculusdb::fetch_item(&g.id) {
