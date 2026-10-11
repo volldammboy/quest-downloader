@@ -600,11 +600,13 @@ impl App {
                 let token = meta_auth::profile_token()?;
                 let plan = meta_auth::plan(&token, &app_c.id)?;
                 let delivery = meta_auth::delivery_token(&token)?;
-                // Nombres oficiales: carpeta y APK por paquete.
-                let folder = game_folder_for(&app_c.name, &plan.package);
+                // Nombres oficiales: carpeta por título, APK y datos por paquete.
+                let folder = game_folder(&app_c.name);
                 let apk = apk_name(&plan.package);
+                let pkg = plan.package.trim().to_string();
+                let obb = if pkg.is_empty() { "obb".into() } else { pkg };
                 std::fs::create_dir_all(&folder).ok();
-                std::fs::create_dir_all(folder.join("obb")).ok();
+                std::fs::create_dir_all(folder.join(&obb)).ok();
                 oculusdb::save_json(&folder.join(format!("{}.json", app_c.id)), &to_store_app(&app_c));
                 let mut files = plan.files;
                 files.extend(extra);
@@ -624,7 +626,7 @@ impl App {
                     let dest = if name.to_lowercase().ends_with(".apk") {
                         folder.join(&name)
                     } else {
-                        folder.join("obb").join(&name)
+                        folder.join(&obb).join(&name)
                     };
                     let jid = dm.add(&dm, format!("{} · {name}", plan.name), url, dest);
                     tx.send(AsyncMsg::Linked(Ok(format!("JOB:{}:{jid}", app_c.id)))).ok();
@@ -854,15 +856,6 @@ fn game_folder(name: &str) -> std::path::PathBuf {
     store::download_dir().join(safe)
 }
 
-/// Carpeta oficial: paquete si se conoce, si no el nombre.
-fn game_folder_for(name: &str, package: &str) -> std::path::PathBuf {
-    if package.trim().is_empty() {
-        game_folder(name)
-    } else {
-        game_folder(package)
-    }
-}
-
 /// Nombre oficial del APK (paquete + .apk).
 fn apk_name(package: &str) -> String {
     let p: String = package
@@ -877,23 +870,24 @@ fn apk_name(package: &str) -> String {
     }
 }
 
-/// ¿APK ya descargado? (layout nuevo por paquete + antiguo por nombre).
+/// ¿APK ya descargado? (layouts nuevo y antiguos).
 fn has_apk(g: &store::Game) -> bool {
-    if !g.package.trim().is_empty()
-        && game_folder(&g.package).join(apk_name(&g.package)).exists()
-    {
-        return true;
+    for dir in [game_folder(&g.name), game_folder(&g.package)] {
+        if dir.join(apk_name(&g.package)).exists() || dir.join("base.apk").exists() {
+            return true;
+        }
     }
-    game_folder(&g.name).join("base.apk").exists()
+    false
 }
 
-/// Carpeta con contenido (nueva por paquete o antigua por nombre).
+/// Carpeta con contenido (nueva por título u otras anteriores).
 fn game_dir(g: &store::Game) -> std::path::PathBuf {
-    if !g.package.trim().is_empty() && game_folder(&g.package).exists() {
-        game_folder(&g.package)
-    } else {
-        game_folder(&g.name)
+    for dir in [game_folder(&g.name), game_folder(&g.package)] {
+        if dir.exists() {
+            return dir;
+        }
     }
+    game_folder(&g.name)
 }
 
 fn to_store_app(g: &store::Game) -> oculusdb::StoreApp {

@@ -134,12 +134,26 @@ fn games_json(token: &str) -> String {
             safe(&g.name) == folder
                 || (!g.package.trim().is_empty() && safe(&g.package) == folder)
         });
-        // APK oficial (<paquete>.apk) o antiguo base.apk.
-        let apk = if dir.join("base.apk").exists() {
-            "base.apk".to_string()
-        } else {
-            format!("{folder}.apk")
-        };
+        // APK oficial (<paquete>.apk) o antiguo base.apk: el que haya.
+        let mut apk = "base.apk".to_string();
+        if !dir.join(&apk).exists() {
+            if let Ok(rd) = std::fs::read_dir(&dir) {
+                let mut v: Vec<_> = rd
+                    .flatten()
+                    .map(|x| x.path())
+                    .filter(|p| {
+                        p.extension().and_then(|x| x.to_str()).map(|e| e.to_lowercase())
+                            == Some("apk".into()) && p.is_file()
+                    })
+                    .collect();
+                v.sort();
+                if let Some(n) = v.into_iter().next().and_then(|p| {
+                    p.file_name().and_then(|n| n.to_str()).map(|s| s.to_string())
+                }) {
+                    apk = n;
+                }
+            }
+        }
         if !dir.join(&apk).exists() {
             continue;
         }
@@ -162,10 +176,23 @@ fn games_json(token: &str) -> String {
         if let Ok(md) = std::fs::metadata(dir.join(&apk)) {
             add(&apk, md.len());
         }
-        // Datos: subcarpeta obb/ (nuevo) o raíz (descargas antiguas).
+        // Datos: subcarpeta (<paquete>/ u obb/) o raíz (descargas antiguas).
         let mut obbs: Vec<(String, u64)> = vec![];
-        for (sub, prefix) in [("obb", "obb/"), ("", "")] {
-            let d = if sub.is_empty() { dir.clone() } else { dir.join(sub) };
+        let mut dirs: Vec<(String, std::path::PathBuf)> = vec![("".into(), dir.clone())];
+        if let Ok(rd) = std::fs::read_dir(&dir) {
+            let mut subs: Vec<_> = rd
+                .flatten()
+                .map(|x| x.path())
+                .filter(|p| p.is_dir())
+                .collect();
+            subs.sort();
+            for s in subs {
+                if let Some(n) = s.file_name().and_then(|n| n.to_str()) {
+                    dirs.push((format!("{n}/"), s));
+                }
+            }
+        }
+        for (prefix, d) in dirs {
             if let Ok(rd) = std::fs::read_dir(&d) {
                 let mut v: Vec<_> = rd
                     .flatten()
@@ -314,8 +341,11 @@ fn handle(req: tiny_http::Request, token: &str) {
             let _ = req.respond(tiny_http::Response::empty(400));
             return;
         }
-        // file: "base.apk" o "obb/<nombre>.obb".
-        let inner = file.strip_prefix("obb/").unwrap_or(file);
+        // file: "base.apk", "<x>.obb" o "<sub>/<x>.obb".
+        let inner = match file.split_once('/') {
+            Some((_sub, rest)) => rest,
+            None => file,
+        };
         if inner.is_empty() || inner.contains('/') || inner.contains('\\') {
             let _ = req.respond(tiny_http::Response::empty(400));
             return;
