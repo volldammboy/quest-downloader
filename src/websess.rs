@@ -219,6 +219,14 @@ fn drain(ws: &mut crate::meta_auth::Ws, idc: &mut u32, secs: u64, out: &mut Vec<
                 .and_then(|x| x.as_str())
             {
                 if body.len() > 500 {
+                    // Muestra para afinar el filtro de DLCs (una vez por arranque).
+                    let sample = crate::store::app_dir().join("pedidos-sample.json");
+                    if !sample.exists() && body.contains("app_store_item") {
+                        if let Some(p) = sample.parent() {
+                            std::fs::create_dir_all(p).ok();
+                        }
+                        std::fs::write(&sample, body).ok();
+                    }
                     let before = out.len();
                     parse_orders(body, out);
                     if out.len() != before {
@@ -267,7 +275,15 @@ pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String)>, Stri
             break;
         }
         let before = out.len();
-        eval(&mut ws, &mut idc, "window.scrollTo(0, document.body.scrollHeight)");
+        // Scroll por pasos (como un humano): dispara la paginación mejor.
+        for k in 1..=5 {
+            eval(
+                &mut ws,
+                &mut idc,
+                &format!("window.scrollTo(0, document.body.scrollHeight*{k}/5)"),
+            );
+            std::thread::sleep(Duration::from_millis(700));
+        }
         drain(&mut ws, &mut idc, 4, &mut out);
         if out.len() == before {
             quiet += 1;
