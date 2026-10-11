@@ -224,10 +224,21 @@ pub fn capture_after_sso(port: u16) {
         }
         let mut ws = crate::meta_auth::Ws::connect("127.0.0.1", port, &path)?;
         ws.stream.set_read_timeout(Some(Duration::from_secs(10))).map_err(|e| e.to_string())?;
-        let nav = serde_json::json!({"url": "https://www.meta.com/my/orders/?order_type=digital_products&timeFilter=ALL_TIME"}).to_string();
+        // Sesión meta.com silenciosa vía OIDC (la auth.meta.com ya está logueada).
+        let rnd: String = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| format!("{:x}", d.as_nanos()))
+            .unwrap_or_else(|_| "qd".into());
+        let oidc = format!(
+            "https://auth.meta.com/oidc/?app_id=800455417652954&nonce={rnd}&redirect_uri=https%3A%2F%2Fwww.meta.com%2Foidc%2Fcallback%2F&response_type=code&scope=openid&state={rnd}&prompt=none"
+        );
+        let nav = serde_json::json!({"url": oidc}).to_string();
         cdp_call(&mut ws, 20, "Page.navigate", &nav)?;
+        std::thread::sleep(Duration::from_secs(8));
+        let nav = serde_json::json!({"url": "https://www.meta.com/my/orders/?order_type=digital_products&timeFilter=ALL_TIME"}).to_string();
+        cdp_call(&mut ws, 21, "Page.navigate", &nav)?;
         std::thread::sleep(Duration::from_secs(12));
-        let r = cdp_call(&mut ws, 21, "Network.getAllCookies", "{}")?;
+        let r = cdp_call(&mut ws, 22, "Network.getAllCookies", "{}")?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
@@ -257,7 +268,7 @@ pub fn capture_after_sso(port: u16) {
         }
         let r = cdp_call(
             &mut ws,
-            22,
+            23,
             "Runtime.evaluate",
             r#"{"expression":"document.documentElement.innerHTML.slice(0,3000000)","returnByValue":true}"#,
         )?;

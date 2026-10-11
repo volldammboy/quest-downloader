@@ -459,7 +459,12 @@ impl App {
                     self.results = r;
                     self.searching = false;
                 }
-                AsyncMsg::Sync(alias, uid, games) => self.apply_sync(alias, uid, games),
+                AsyncMsg::Sync(alias, uid, games) => {
+                    if uid.starts_with("ERR:") {
+                        crate::meta_auth::note("poll", &format!("sync ERR: {}", uid.chars().take(80).collect::<String>()));
+                    }
+                    self.apply_sync(alias, uid, games)
+                }
                 AsyncMsg::ImportOrders(r) => match r {
                     Ok(games) => self.apply_import_orders(games),
                     Err(e) => {

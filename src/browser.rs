@@ -161,6 +161,7 @@ pub(crate) fn launch_chromium(
         .arg(format!("--remote-debugging-port={port}"))
         .arg(format!("--user-data-dir={}", profile.display()))
         .arg("--no-first-run")
+        .arg("--disable-external-intent-requests")
         .arg("--new-window")
         .arg(url)
         .spawn()
