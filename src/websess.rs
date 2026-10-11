@@ -231,6 +231,7 @@ pub fn capture_after_sso(port: u16) {
         // Espera larga: el usuario completa el login web en esa ventana.
         let deadline = Instant::now() + Duration::from_secs(600);
         // Bucle: espera a que el usuario complete el login web en esa ventana.
+        crate::meta_auth::note("websess", "esperando login web en la ventana");
         let mut call_id = 22u32;
         loop {
             if Instant::now() > deadline {
@@ -263,7 +264,7 @@ pub fn capture_after_sso(port: u16) {
                 }
             }
             if sess.c_user.is_empty() || sess.c_user == "0" {
-                std::thread::sleep(Duration::from_secs(4));
+                std::thread::sleep(Duration::from_secs(2));
                 continue;
             }
             call_id += 1;
@@ -283,7 +284,7 @@ pub fn capture_after_sso(port: u16) {
             sess.lsd = scrape(html, &["\"lsd\":\""]);
             sess.jazoest = scrape(html, &["\"jazoest\":\"", "jazoest="]);
             if sess.fb_dtsg.is_empty() {
-                std::thread::sleep(Duration::from_secs(4));
+                std::thread::sleep(Duration::from_secs(2));
                 continue;
             }
             for (n, val, exp) in raw_cookies {
