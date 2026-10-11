@@ -18,6 +18,18 @@ pub fn web_profile() -> std::path::PathBuf {
     crate::store::app_dir().join("web-profile")
 }
 
+/// Eventos CDP guardados mientras `cdp_call` espera su respuesta (los eval
+/// los descartaban: ahí se perdían cuerpos). `drain` los consume.
+static PENDING: std::sync::OnceLock<std::sync::Mutex<Vec<String>>> =
+    std::sync::OnceLock::new();
+
+fn pending() -> std::sync::MutexGuard<'static, Vec<String>> {
+    PENDING
+        .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+        .lock()
+        .unwrap()
+}
+
 fn cdp_call(
     ws: &mut crate::meta_auth::Ws,
     id: u32,
@@ -36,6 +48,7 @@ fn cdp_call(
         if v.get("id").and_then(|x| x.as_u64()) == Some(id as u64) {
             return Ok(v);
         }
+        pending().push(text);
     }
 }
 
@@ -183,11 +196,18 @@ fn parse_orders(body: &str, out: &mut Vec<(String, String)>) {
 /// Recoge respuestas de pedidos durante `secs` segundos.
 fn drain(ws: &mut crate::meta_auth::Ws, idc: &mut u32, secs: u64, out: &mut Vec<(String, String)>, stat: &mut (u32, u32, u32)) {
     let t0 = Instant::now();
-    let mut wanted: Vec<String> = vec![];
-    while t0.elapsed() < Duration::from_secs(secs) {
-        let text = match ws.recv_text() {
-            Ok(t) => t,
-            Err(_) => continue,
+    let mut wanted: Vec<(String, String)> = vec![]; // (requestId, método+url)
+    loop {
+        if t0.elapsed() >= Duration::from_secs(secs) {
+            break;
+        }
+        let text = if let Some(t) = pending().pop() {
+            t
+        } else {
+            match ws.recv_text() {
+                Ok(t) => t,
+                Err(_) => continue,
+            }
         };
         let v: serde_json::Value =
             serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
@@ -201,12 +221,26 @@ fn drain(ws: &mut crate::meta_auth::Ws, idc: &mut u32, secs: u64, out: &mut Vec<
                 .unwrap_or("");
             let rid = params.get("requestId").and_then(|x| x.as_str()).unwrap_or("");
             if (url.contains("/a/fl") || url.contains("api/graphql")) && !url.contains("rsrc.php") {
-                wanted.push(rid.to_string());
+                let m = params
+                    .get("request")
+                    .and_then(|r| r.get("method"))
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("?");
+                wanted.push((rid.to_string(), format!("{m} {url}")));
                 stat.0 += 1;
+            }
+        } else if method == "Network.responseReceived" {
+            let rid = params.get("requestId").and_then(|x| x.as_str()).unwrap_or("");
+            if let Some((_, u)) = wanted.iter().find(|(id, _)| id == rid) {
+                let resp = params.get("response").cloned().unwrap_or(serde_json::Value::Null);
+                let status = resp.get("status").and_then(|x| x.as_u64()).unwrap_or(0);
+                let cached = resp.get("fromDiskCache").and_then(|x| x.as_bool()).unwrap_or(false);
+                let tail: String = u.chars().rev().take(100).collect::<String>().chars().rev().collect();
+                crate::meta_auth::note("pedidos", &format!("rr {status} cache={cached} {tail}"));
             }
         } else if method == "Network.loadingFinished" {
             let rid = params.get("requestId").and_then(|x| x.as_str()).unwrap_or("");
-            if wanted.contains(&rid.to_string()) {
+            if wanted.iter().any(|(id, _)| id == rid) {
                 stat.1 += 1;
                 *idc += 1;
                 let gid = *idc;
@@ -215,11 +249,14 @@ fn drain(ws: &mut crate::meta_auth::Ws, idc: &mut u32, secs: u64, out: &mut Vec<
                 ));
             }
         } else if v.get("id").is_some() {
-            if let Some(body) = v
+            if let Some(err) = v.get("error") {
+                crate::meta_auth::note("pedidos", &format!("cuerpo error: {err}"));
+            } else if let Some(body) = v
                 .get("result")
                 .and_then(|x| x.get("body"))
                 .and_then(|x| x.as_str())
             {
+                crate::meta_auth::note("pedidos", &format!("cuerpo len={}", body.len()));
                 if body.len() > 500 {
                     stat.2 += 1;
                     // Muestra para afinar el filtro de DLCs (una vez por arranque).
@@ -245,6 +282,7 @@ fn drain(ws: &mut crate::meta_auth::Ws, idc: &mut u32, secs: u64, out: &mut Vec<
 pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String)>, String> {
     let deadline = Instant::now() + Duration::from_secs(900);
     let (mut ws, here) = page_ws(port, Instant::now() + Duration::from_secs(60))?;
+    pending().clear();
     let mut idc = 100u32;
     cdp_call(&mut ws, 10, "Network.enable", "{}")?;
     // Sin caché: si no, las respuestas vienen 304/vacías y no hay cuerpos.
