@@ -473,24 +473,16 @@ impl App {
                     added += 1;
                 }
             }
-            // 2) Plataforma de lo listado; fuera PCVR.
+            // 2) Plataforma de lo listado (los Rift se quedan con etiqueta PCVR).
             for g in store::library_all() {
                 if !g.owned {
                     continue;
                 }
                 let plat = g.info.get("platform").and_then(|v| v.as_str()).unwrap_or("");
-                if plat == "rift" {
-                    store::library_remove(&g.id);
-                    std::fs::remove_file(store::covers_dir().join(format!("{}.jpg", g.id))).ok();
-                    removed += 1;
-                    continue;
-                }
                 if plat.is_empty() {
                     if let Some(it) = oculusdb::fetch_item(&g.id) {
                         if it.binary == 2 {
-                            store::library_remove(&g.id);
-                            std::fs::remove_file(store::covers_dir().join(format!("{}.jpg", g.id))).ok();
-                            removed += 1;
+                            store::library_set_platform(&g.id, "rift");
                         } else if it.otype == "Application" {
                             store::library_set_platform(&g.id, "quest");
                         }
@@ -625,10 +617,11 @@ impl App {
                     self.refresh_library();
                     self.ensure_covers();
                     if added + removed > 0 {
-                        self.status = format!(
-                            "{} +{added} -{removed} Rift",
-                            tr(&lang, "Verificado:")
-                        );
+                        let mut msg = format!("{} +{added}", tr(&lang, "Verificado:"));
+                        if removed > 0 {
+                            msg.push_str(&format!(" -{removed} Rift"));
+                        }
+                        self.status = msg;
                     }
                 },
                 AsyncMsg::Plan(id, r) => {
@@ -1961,6 +1954,28 @@ impl App {
                                     String::new()
                                 }
                             );
+                            // Etiqueta PCVR arriba a la derecha.
+                            if g.info.get("platform").and_then(|v| v.as_str()).unwrap_or("") == "rift" {
+                                let gal = ui.painter().layout_no_wrap(
+                                    "PCVR".to_string(),
+                                    egui::FontId::proportional(13.0),
+                                    egui::Color32::WHITE,
+                                );
+                                let bg = egui::Rect::from_min_size(
+                                    egui::pos2(r.max.x - 8.0 - gal.size().x - 12.0, r.min.y + 8.0),
+                                    egui::vec2(gal.size().x + 12.0, gal.size().y + 6.0),
+                                );
+                                ui.painter().rect_filled(
+                                    bg,
+                                    5.0,
+                                    egui::Color32::from_rgb(0x1f, 0x9d, 0x4d),
+                                );
+                                ui.painter().galley(
+                                    egui::pos2(bg.min.x + 6.0, bg.min.y + 3.0),
+                                    gal,
+                                    egui::Color32::WHITE,
+                                );
+                            }
                             // Barra inferior sobre la imagen: título + estado | iconos
                             let bar_h = 52.0;
                             let bar = egui::Rect::from_min_size(
