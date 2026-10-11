@@ -242,6 +242,8 @@ impl App {
         }
         self.syncing = true;
         let tx = self.tx.clone();
+        let pid = std::process::id();
+        crate::meta_auth::note("sync", &format!("hilo pid={pid}"));
         std::thread::spawn(move || {
             let out = (|| -> Result<(String, String, Vec<meta_auth::LibGame>), String> {
                 let token = meta_auth::profile_token()?;
@@ -249,10 +251,11 @@ impl App {
             })();
             match out {
                 Ok((alias, uid, games)) => {
+                    crate::meta_auth::note("sync", "enviando ok");
                     tx.send(AsyncMsg::Sync(alias, uid, games)).ok();
                 }
                 Err(e) => {
-                    // reutiliza el canal Sync con error codificado en alias vacío
+                    crate::meta_auth::note("sync", "enviando err");
                     tx.send(AsyncMsg::Sync(String::new(), format!("ERR:{e}"), vec![]))
                         .ok();
                 }
