@@ -537,15 +537,18 @@ pub fn plan(token: &str, app_id: &str) -> Result<Plan, String> {
     let mut optional = vec![];
     for a in assets {
         let fname = str_of(a.get("file_name"));
-        if a.get("is_required") == Some(&serde_json::Value::Bool(false))
-            || a.get("iap_item").is_some()
-        {
+        // Solo es opcional lo marcado no-requerido (idiomas, DLC de verdad).
+        // Los chunks de parche/activos traen iap_item pero SON requeridos
+        // (p. ej. Asgard's Wrath 2: 89 pakchunks sin ellos el juego va incompleto).
+        let is_opt = a.get("is_required") == Some(&serde_json::Value::Bool(false));
+        let has_iap = a.get("iap_item").is_some();
+        if is_opt {
             optional.push(mk(
                 str_of(a.get("id")),
                 fname,
                 str_of(a.get("uri")),
                 u64_of(a.get("size")),
-                a.get("iap_item").is_some(),
+                has_iap,
             ));
             continue;
         }

@@ -2322,6 +2322,31 @@ fn main() -> eframe::Result<()> {
         std::thread::sleep(std::time::Duration::from_secs(90));
         return Ok(());
     }
+    if let Some(a) = std::env::args().find(|x| x.starts_with("--probe-plan=")) {
+        let app = a.split_once('=').map(|(_, v)| v.to_string()).unwrap_or_default();
+        match (|| -> Result<(), String> {
+            let token = crate::meta_auth::profile_token()?;
+            let p = crate::meta_auth::plan(&token, &app)?;
+            println!("PROBE plan {} v{} files={}", p.name, p.version, p.files.len());
+            for f in &p.files {
+                println!(
+                    "  FILE {} size={} uri={}",
+                    f.name,
+                    f.size,
+                    f.uri.chars().take(80).collect::<String>()
+                );
+            }
+            println!("PROBE optional={}", p.optional.len());
+            for f in &p.optional {
+                println!("  OPT {} size={} iap={}", f.name, f.size, f.iap);
+            }
+            Ok(())
+        })() {
+            Ok(()) => {}
+            Err(e) => println!("PROBE plan ERR {e}"),
+        }
+        return Ok(());
+    }
     if std::env::args().any(|a| a == "--probe-page") {
         let out = (|| -> Result<serde_json::Value, String> {
             let token = crate::meta_auth::profile_token()?;
