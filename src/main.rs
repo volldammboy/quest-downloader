@@ -41,6 +41,7 @@ enum AsyncMsg {
     Cover(String, Vec<u8>),
     Linked(Result<String, String>),
     ImportOrders(Result<Vec<meta_auth::LibGame>, String>),
+    ImportProgress(Vec<meta_auth::LibGame>),
     PlatformDone((u32, u32)),
 }
 
@@ -284,9 +285,24 @@ impl App {
         self.status = tr(&self.lang, "Importando pedidos… sigue en la ventana");
         crate::meta_auth::note("pedidos", "importando");
         let tx = self.tx.clone();
+        let ptx = self.tx.clone();
         std::thread::spawn(move || {
+            let prog = move |v: Vec<(String, String, String)>| {
+                let games: Vec<meta_auth::LibGame> = v
+                    .into_iter()
+                    .map(|(id, name, cover)| meta_auth::LibGame {
+                        id,
+                        name,
+                        package: String::new(),
+                        publisher: String::new(),
+                        genres: String::new(),
+                        cover,
+                    })
+                    .collect();
+                ptx.send(AsyncMsg::ImportProgress(games)).ok();
+            };
             let r = (|| -> Result<Vec<meta_auth::LibGame>, String> {
-                crate::websess::login_interactive().map(|v| {
+                crate::websess::login_interactive(&prog).map(|v| {
                     v.into_iter()
                         .map(|(id, name, cover)| meta_auth::LibGame {
                             id,
@@ -303,20 +319,19 @@ impl App {
         });
     }
 
-    fn apply_import_orders(&mut self, games: Vec<meta_auth::LibGame>) {
-        // Alta sin borrar: no toca lo que ya hay (el sync con 500 no vacía nada).
-        // Sin repetidos por nombre (bundles expandidos, ediciones).
+    /// Alta con antiduplicado por nombre. Devuelve cuántos entran nuevos.
+    fn insert_import_games(games: &[meta_auth::LibGame]) -> usize {
         let mut known: std::collections::HashSet<String> = store::library_all()
             .iter()
             .map(|g| norm_name(&g.name))
             .collect();
-        for g in &games {
+        let mut n = 0usize;
+        for g in games {
             let name = if g.name.is_empty() { "?".into() } else { g.name.clone() };
-            let norm = norm_name(&name);
-            if !known.insert(norm) {
+            if !known.insert(norm_name(&name)) {
                 continue;
             }
-            let game = store::Game {
+            store::library_add(&store::Game {
                 id: g.id.clone(),
                 name,
                 package: g.package.clone(),
@@ -328,9 +343,16 @@ impl App {
                 verified_at: 0,
                 art_url: g.cover.clone(),
                 info: serde_json::json!({ "genres": g.genres, "platform": "" }),
-            };
-            store::library_add(&game);
+            });
+            n += 1;
         }
+        n
+    }
+
+    fn apply_import_orders(&mut self, games: Vec<meta_auth::LibGame>) {
+        // Alta sin borrar: no toca lo que ya hay (el sync con 500 no vacía nada).
+        // Sin repetidos por nombre (bundles expandidos, ediciones).
+        Self::insert_import_games(&games);
         self.syncing = false;
         self.refresh_library();
         self.ensure_covers();
@@ -572,6 +594,15 @@ impl App {
                         crate::meta_auth::note("poll", &format!("sync ERR: {}", uid.chars().take(80).collect::<String>()));
                     }
                     self.apply_sync(alias, uid, games)
+                }
+                AsyncMsg::ImportProgress(games) => {
+                    Self::insert_import_games(&games);
+                    self.refresh_library();
+                    self.status = format!(
+                        "{} {}",
+                        tr(&lang, "Importando pedidos…"),
+                        self.library.len()
+                    );
                 }
                 AsyncMsg::ImportOrders(r) => match r {
                     Ok(games) => {
@@ -1185,6 +1216,10 @@ impl eframe::App for App {
         if !self.plat_checked {
             self.plat_checked = true;
             self.verify_platforms();
+        }
+        if self.syncing {
+            // Progreso en vivo durante sync/import.
+            ctx.request_repaint();
         }
         let lang = self.lang.clone();
         let (down, hpos) =

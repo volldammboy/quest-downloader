@@ -663,8 +663,24 @@ fn dom_extract(
     }
 }
 
+/// Emite el progreso si hay novedades (la UI va pintando la Biblioteca).
+fn emit(
+    out: &[(String, String, String)],
+    sent: &mut usize,
+    progress: &dyn Fn(Vec<(String, String, String)>),
+) {
+    if out.len() > *sent {
+        *sent = out.len();
+        progress(out.to_vec());
+    }
+}
+
 /// Espera login en pedidos, oculta la ventana y captura (id, nombre, portada).
-pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String, String)>, String> {
+pub fn capture_orders(
+    port: u16,
+    pid: u32,
+    progress: &dyn Fn(Vec<(String, String, String)>),
+) -> Result<Vec<(String, String, String)>, String> {
     let deadline = Instant::now() + Duration::from_secs(900);
     let (mut ws, here) = page_ws(port, Instant::now() + Duration::from_secs(60))?;
     pending().clear();
@@ -694,11 +710,14 @@ pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String, String
         hide_pid(pid);
     }
     let mut out: Vec<(String, String, String)> = vec![];
+    let mut sent = 0usize;
     let mut stat = (0u32, 0u32, 0u32);
     // Primero el DOM: la primera página viene incrustada en el HTML.
     dom_extract(&mut ws, &mut idc, &mut out);
+    emit(&out, &mut sent, progress);
     // La carga fresca ya trae la primera página: recógela.
     drain(&mut ws, &mut idc, 10, &mut out, &mut stat);
+    emit(&out, &mut sent, progress);
     let mut quiet = 0u32;
     for i in 0..150 {
         if Instant::now() > deadline {
@@ -719,6 +738,7 @@ pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String, String
         if i % 3 == 2 {
             dom_extract(&mut ws, &mut idc, &mut out);
         }
+        emit(&out, &mut sent, progress);
         if out.len() == before {
             quiet += 1;
         } else {
@@ -732,9 +752,11 @@ pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String, String
     if let Some(post) = take_query() {
         crate::meta_auth::note("pedidos", &format!("paginando por fetch ({} enviados)", post.len()));
         fetch_pages(&mut ws, &mut idc, &post, &mut out);
+        emit(&out, &mut sent, progress);
     }
     // Última pasada al DOM por lo que haya quedado pintado.
     dom_extract(&mut ws, &mut idc, &mut out);
+    emit(&out, &mut sent, progress);
     crate::meta_auth::note(
         "pedidos",
         &format!("resumen req={} fin={} cuerpos={} juegos={}", stat.0, stat.1, stat.2, out.len()),
@@ -770,7 +792,9 @@ fn headless_listed(port: u16) -> bool {
 }
 
 /// Login web interactivo (bypass manual del error 500).
-pub fn login_interactive() -> Result<Vec<(String, String, String)>, String> {
+pub fn login_interactive(
+    progress: &dyn Fn(Vec<(String, String, String)>),
+) -> Result<Vec<(String, String, String)>, String> {
     let port = {
         let s = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
         s.local_addr().map_err(|e| e.to_string())?.port()
@@ -798,7 +822,7 @@ pub fn login_interactive() -> Result<Vec<(String, String, String)>, String> {
     {
         if headless_listed(port) {
             crate::meta_auth::note("pedidos", "sesión válida, invisible");
-            let r = capture_orders(port, 0);
+            let r = capture_orders(port, 0, progress);
             let _ = headless.kill();
             std::thread::sleep(Duration::from_secs(1));
             return r;
@@ -809,7 +833,7 @@ pub fn login_interactive() -> Result<Vec<(String, String, String)>, String> {
     // 2) Visible para loguearse.
     let mut child = crate::browser::launch_chromium(&exe, port, &profile, ORDERS_URL)
         .map_err(|e| format!("No se pudo abrir el navegador: {e}"))?;
-    let r = capture_orders(port, child.id());
+    let r = capture_orders(port, child.id(), progress);
     let _ = child.kill();
     std::thread::sleep(Duration::from_secs(1));
     r
