@@ -89,7 +89,7 @@ impl App {
         setup_fonts(&cc.egui_ctx);
         let (tx, rx) = mpsc::channel();
         let app = Self {
-            page: Page::Store,
+            page: Page::Lib,
             dm: Arc::new(DownloadManager::new()),
             library: store::library_all(),
             covers: HashMap::new(),
@@ -698,27 +698,31 @@ impl App {
                             // Cada idioma: un paquete global (textos + audio).
                             // Se omiten los archivos de idioma ya incluidos en la base.
                             let mut base = p.files;
+                            // Nombres opcionales al log (diagnóstico de packs).
+                            crate::meta_auth::note(
+                                "plan",
+                                &format!(
+                                    "opcionales: {}",
+                                    p.optional
+                                        .iter()
+                                        .map(|f| f.name.clone())
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                        .chars()
+                                        .take(500)
+                                        .collect::<String>()
+                                ),
+                            );
                             for f in p.optional.iter().filter(|f| !is_lang_file(&f.name)) {
                                 base.push(f.clone());
                             }
-                            // Solo se omiten opcionales idénticos a la base
-                            // (mismo nombre o mismo idioma+tipo+tamaño).
+                            // Solo se omiten opcionales con el mismo nombre que la base.
+                            // (El dedupe por idioma+tipo+tamaño escondía packs distintos
+                            // con igual tamaño, p. ej. audios por idioma.)
                             let mut base_names: std::collections::HashSet<String> =
                                 std::collections::HashSet::new();
-                            let mut base_sig: std::collections::HashSet<(
-                                String,
-                                String,
-                                u64,
-                            )> = std::collections::HashSet::new();
                             for f in &base {
                                 base_names.insert(f.name.clone());
-                                if let Some(l) = lang_detect(&f.name) {
-                                    base_sig.insert((
-                                        l,
-                                        lang_kind(&f.name).to_string(),
-                                        f.size,
-                                    ));
-                                }
                             }
                             let mut order: Vec<String> = vec![];
                             let mut map: HashMap<String, Vec<meta_auth::PlanFile>> =
@@ -731,16 +735,6 @@ impl App {
                                 };
                                 if base_names.contains(&f.name) {
                                     continue;
-                                }
-                                if let Some(l) = lang_detect(&f.name) {
-                                    let sig = (
-                                        l,
-                                        lang_kind(&f.name).to_string(),
-                                        f.size,
-                                    );
-                                    if base_sig.contains(&sig) {
-                                        continue;
-                                    }
                                 }
                                 if !map.contains_key(&key) {
                                     order.push(key.clone());
@@ -1223,8 +1217,55 @@ fn lang_detect(name: &str) -> Option<String> {
     } else if n.contains("hindi") {
         Some("Hindi".into())
     } else {
-        None
+        lang_code(&n)
     }
+}
+
+/// Códigos de idioma entre delimitadores (p. ej. pakchunk5-de-…).
+/// Se acolcha con '-' para no tragar subcadenas ("encode" no es "en").
+fn lang_code(n: &str) -> Option<String> {
+    let pad: String = n
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    let pad = format!("-{pad}-");
+    for (code, name) in [
+        ("en", "Inglés"),
+        ("fr", "Francés"),
+        ("de", "Alemán"),
+        ("it", "Italiano"),
+        ("es", "Español"),
+        ("pt", "Portugués"),
+        ("nl", "Neerlandés"),
+        ("pl", "Polaco"),
+        ("ru", "Ruso"),
+        ("ja", "Japonés"),
+        ("ko", "Coreano"),
+        ("zh", "Chino"),
+        ("ar", "Árabe"),
+        ("tr", "Turco"),
+        ("sv", "Sueco"),
+        ("da", "Danés"),
+        ("no", "Noruego"),
+        ("fi", "Finés"),
+        ("cs", "Checo"),
+        ("hu", "Húngaro"),
+        ("el", "Griego"),
+        ("th", "Tailandés"),
+        ("vi", "Vietnamita"),
+        ("id", "Indonesio"),
+        ("he", "Hebreo"),
+        ("hi", "Hindi"),
+    ] {
+        if pad.contains(&format!("-{code}-")) {
+            // Español Latam mantiene su distinción.
+            if code == "es" && (pad.contains("-latam-") || pad.contains("-419-")) {
+                return Some("Español (Latam)".into());
+            }
+            return Some(name.into());
+        }
+    }
+    None
 }
 
 fn is_lang_file(name: &str) -> bool {
@@ -1426,7 +1467,10 @@ impl eframe::App for App {
                     } else if ui.button(tr(&lang, "Vincular cuenta Meta")).clicked() {
                         self.do_link();
                     }
-                    let srv = crate::server::status();
+                    let _srv = crate::server::status();
+                    // Botón Servidor visor oculto temporalmente (se reactiva más adelante).
+                    if false {
+                    let srv = _srv;
                     let srv_btn = if srv.running { tr(&lang, "Detener") } else { tr(&lang, "Iniciar") };
                     let srv_tip = if srv.running {
                         format!(
@@ -1443,6 +1487,7 @@ impl eframe::App for App {
                         .on_hover_text(srv_tip);
                     if srv_resp.clicked() {
                         crate::server::toggle();
+                    }
                     }
                     let mut q = std::mem::take(&mut self.query);
                     let r = ui.add(
@@ -1510,8 +1555,8 @@ impl eframe::App for App {
             .exact_width(196.0)
             .show(ctx, |ui| {
                 for (p, label, tip) in [
-                    (Page::Store, format!("🏬 {}", tr(&lang, "Tienda")), tr(&lang, "Buscar en la Store (Ctrl+1)")),
                     (Page::Lib, format!("📚 {}", tr(&lang, "Biblioteca")), tr(&lang, "Tus juegos (Ctrl+2)")),
+                    (Page::Store, format!("🏬 {}", tr(&lang, "Tienda")), tr(&lang, "Buscar en la Store (Ctrl+1)")),
                     (Page::Dl, format!("⬇ {}", tr(&lang, "Descargas")), tr(&lang, "Descargas en curso (Ctrl+3)")),
                 ] {
                     let mut text = label.to_string();
