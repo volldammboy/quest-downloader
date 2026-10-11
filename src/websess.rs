@@ -224,75 +224,78 @@ pub fn capture_after_sso(port: u16) {
         }
         let mut ws = crate::meta_auth::Ws::connect("127.0.0.1", port, &path)?;
         ws.stream.set_read_timeout(Some(Duration::from_secs(10))).map_err(|e| e.to_string())?;
-        // Sesión meta.com silenciosa vía OIDC (la auth.meta.com ya está logueada).
-        let rnd: String = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| format!("{:x}", d.as_nanos()))
-            .unwrap_or_else(|_| "qd".into());
-        let oidc = format!(
-            "https://auth.meta.com/oidc/?app_id=800455417652954&nonce={rnd}&redirect_uri=https%3A%2F%2Fwww.meta.com%2Foidc%2Fcallback%2F&response_type=code&scope=openid&state={rnd}&prompt=none"
-        );
-        let nav = serde_json::json!({"url": oidc}).to_string();
-        cdp_call(&mut ws, 20, "Page.navigate", &nav)?;
-        std::thread::sleep(Duration::from_secs(8));
+        // Misma ventana del SSO: abre pedidos para completar la sesión web.
+        // (El puente silencioso OIDC no cuaja; login manual una vez.)
         let nav = serde_json::json!({"url": "https://www.meta.com/my/orders/?order_type=digital_products&timeFilter=ALL_TIME"}).to_string();
-        cdp_call(&mut ws, 21, "Page.navigate", &nav)?;
-        std::thread::sleep(Duration::from_secs(12));
-        let r = cdp_call(&mut ws, 22, "Network.getAllCookies", "{}")?;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-        let mut sess = WebSession::default();
-        let mut raw_cookies = vec![];
-        if let Some(arr) = r.get("result").and_then(|x| x.get("cookies")).and_then(|x| x.as_array()) {
-            for c in arr {
-                let domain = c.get("domain").and_then(|x| x.as_str()).unwrap_or("");
-                if !(domain.contains("meta.com") || domain.contains("facebook.com") || domain.contains("oculus.com")) {
-                    continue;
-                }
-                let n = c.get("name").and_then(|x| x.as_str()).unwrap_or("");
-                let val = c.get("value").and_then(|x| x.as_str()).unwrap_or("");
-                let exp = c.get("expires").and_then(|x| x.as_i64()).unwrap_or(-1);
-                if n.is_empty() || val.is_empty() {
-                    continue;
-                }
-                if n == "c_user" {
-                    sess.c_user = val.into();
-                }
-                raw_cookies.push((n.to_string(), val.to_string(), exp));
+        cdp_call(&mut ws, 20, "Page.navigate", &nav)?;
+        // Espera larga: el usuario completa el login web en esa ventana.
+        let deadline = Instant::now() + Duration::from_secs(600);
+        // Bucle: espera a que el usuario complete el login web en esa ventana.
+        let mut call_id = 22u32;
+        loop {
+            if Instant::now() > deadline {
+                return Err("sin login web".into());
             }
-        }
-        if sess.c_user.is_empty() || sess.c_user == "0" {
-            return Err("sin c_user".into());
-        }
-        let r = cdp_call(
-            &mut ws,
-            23,
-            "Runtime.evaluate",
-            r#"{"expression":"document.documentElement.innerHTML.slice(0,3000000)","returnByValue":true}"#,
-        )?;
-        let html = r
-            .get("result")
-            .and_then(|x| x.get("result"))
-            .and_then(|x| x.get("value"))
-            .and_then(|x| x.as_str())
-            .unwrap_or("");
-        sess.fb_dtsg = scrape(html, &["\"fb_dtsg\":\"", "\"fbdtsg\":\"", "fb_dtsg="]);
-        sess.lsd = scrape(html, &["\"lsd\":\""]);
-        sess.jazoest = scrape(html, &["\"jazoest\":\"", "jazoest="]);
-        if sess.fb_dtsg.is_empty() {
-            return Err("sin fb_dtsg".into());
-        }
-        for (n, val, exp) in raw_cookies {
-            if exp > 0 && exp < now {
+            call_id += 1;
+            let r = cdp_call(&mut ws, call_id, "Network.getAllCookies", "{}")?;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            let mut sess = WebSession::default();
+            let mut raw_cookies = vec![];
+            if let Some(arr) = r.get("result").and_then(|x| x.get("cookies")).and_then(|x| x.as_array()) {
+                for c in arr {
+                    let domain = c.get("domain").and_then(|x| x.as_str()).unwrap_or("");
+                    if !(domain.contains("meta.com") || domain.contains("facebook.com") || domain.contains("oculus.com")) {
+                        continue;
+                    }
+                    let n = c.get("name").and_then(|x| x.as_str()).unwrap_or("");
+                    let val = c.get("value").and_then(|x| x.as_str()).unwrap_or("");
+                    let exp = c.get("expires").and_then(|x| x.as_i64()).unwrap_or(-1);
+                    if n.is_empty() || val.is_empty() {
+                        continue;
+                    }
+                    if n == "c_user" {
+                        sess.c_user = val.into();
+                    }
+                    raw_cookies.push((n.to_string(), val.to_string(), exp));
+                }
+            }
+            if sess.c_user.is_empty() || sess.c_user == "0" {
+                std::thread::sleep(Duration::from_secs(4));
                 continue;
             }
-            sess.cookies.push(WebCookie { name: n, value: val, exp });
+            call_id += 1;
+            let r = cdp_call(
+                &mut ws,
+                call_id,
+                "Runtime.evaluate",
+                r#"{"expression":"document.documentElement.innerHTML.slice(0,3000000)","returnByValue":true}"#,
+            )?;
+            let html = r
+                .get("result")
+                .and_then(|x| x.get("result"))
+                .and_then(|x| x.get("value"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("");
+            sess.fb_dtsg = scrape(html, &["\"fb_dtsg\":\"", "\"fbdtsg\":\"", "fb_dtsg="]);
+            sess.lsd = scrape(html, &["\"lsd\":\""]);
+            sess.jazoest = scrape(html, &["\"jazoest\":\"", "jazoest="]);
+            if sess.fb_dtsg.is_empty() {
+                std::thread::sleep(Duration::from_secs(4));
+                continue;
+            }
+            for (n, val, exp) in raw_cookies {
+                if exp > 0 && exp < now {
+                    continue;
+                }
+                sess.cookies.push(WebCookie { name: n, value: val, exp });
+            }
+            save_session(&sess)?;
+            crate::meta_auth::note("websess", "sesión web capturada en vinculado");
+            return Ok(());
         }
-        save_session(&sess)?;
-        crate::meta_auth::note("websess", "sesión web capturada en vinculado");
-        Ok(())
     })();
     if let Err(e) = res {
         crate::meta_auth::note("websess", &format!("captura omitida: {e}"));
