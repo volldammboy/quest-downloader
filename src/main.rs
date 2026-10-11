@@ -39,6 +39,20 @@ enum AsyncMsg {
     Plan(String, Result<meta_auth::Plan, String>),
     Cover(String, Vec<u8>),
     Linked(Result<String, String>),
+    OwnCheck(String, bool),
+}
+
+/// Comprueba propiedad en Meta (plan descargable ⇒ entitled) y marca owned.
+fn spawn_own_check(tx: std::sync::mpsc::Sender<AsyncMsg>, id: String) {
+    std::thread::spawn(move || {
+        let ok = (|| -> Result<(), String> {
+            let token = meta_auth::profile_token()?;
+            meta_auth::plan(&token, &id)?;
+            Ok(())
+        })()
+        .is_ok();
+        tx.send(AsyncMsg::OwnCheck(id, ok)).ok();
+    });
 }
 
 struct App {
@@ -375,6 +389,12 @@ impl App {
                     self.searching = false;
                 }
                 AsyncMsg::Sync(alias, uid, games) => self.apply_sync(alias, uid, games),
+                AsyncMsg::OwnCheck(id, ok) => {
+                    if ok {
+                        store::library_set_owned(&id, true);
+                        self.refresh_library();
+                    }
+                }
                 AsyncMsg::Plan(id, r) => {
                     self.plan_pending = false;
                     match r {
@@ -1334,10 +1354,11 @@ impl eframe::App for App {
                                                 verified_at: 0,
                 art_url: String::new(),
                                                                                     info: serde_json::json!({
-                                                    "genres": p.genres, "image_url": p.image_url,
+                                                    "genres": p.genres, "image_url": p.image_url, "platform": p.platform,
                                                 }),
                                             };
                                             store::library_add(&g);
+                                            spawn_own_check(tx.clone(), g.id.clone());
                                         }
                                     }
                                 }
@@ -1815,6 +1836,7 @@ impl App {
                 store::library_add(&g);
                 self.refresh_library();
                 self.ensure_covers();
+                spawn_own_check(self.tx.clone(), g.id.clone());
                 if dl {
                     self.page = Page::Dl;
                     self.open_download_dialog(g);
@@ -1923,6 +1945,22 @@ fn main() -> eframe::Result<()> {
         let s = crate::server::toggle();
         println!("PROBE srv running={} {}:{} token={} err={}", s.running, s.ip, crate::server::PORT, s.token, s.error);
         std::thread::sleep(std::time::Duration::from_secs(90));
+        return Ok(());
+    }
+    if std::env::args().any(|a| a == "--probe-sync") {
+        let out = (|| -> Result<(String, String, Vec<crate::meta_auth::LibGame>), String> {
+            let token = crate::meta_auth::profile_token()?;
+            crate::meta_auth::fetch_library(&token)
+        })();
+        match out {
+                Ok((alias, uid, games)) => {
+                    println!("PROBE sync ok alias_len={} uid_len={} games={}", alias.len(), uid.len(), games.len());
+                    for g in games.iter().take(8) {
+                        println!("PROBE game {} {}", g.id, g.name);
+                    }
+                }
+                Err(e) => println!("PROBE sync ERR {e}"),
+        }
         return Ok(());
     }
     let options = eframe::NativeOptions {
