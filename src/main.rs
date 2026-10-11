@@ -78,7 +78,7 @@ impl App {
         setup_fonts(&cc.egui_ctx);
         let (tx, rx) = mpsc::channel();
         let app = Self {
-            page: Page::Lib,
+            page: Page::Store,
             dm: Arc::new(DownloadManager::new()),
             library: store::library_all(),
             covers: HashMap::new(),
@@ -681,6 +681,8 @@ fn tr(lang: &str, es: &str) -> String {
         "Ver" => "View",
         "Biblioteca  Ctrl+1" => "Library  Ctrl+1",
         "Tienda  Ctrl+2" => "Store  Ctrl+2",
+        "Tienda  Ctrl+1" => "Store  Ctrl+1",
+        "Biblioteca  Ctrl+2" => "Library  Ctrl+2",
         "Descargas  Ctrl+3" => "Downloads  Ctrl+3",
         "Idioma" => "Language",
         "(actual)" => "(current)",
@@ -703,6 +705,8 @@ fn tr(lang: &str, es: &str) -> String {
         "Descargas" => "Downloads",
         "Tus juegos (Ctrl+1)" => "Your games (Ctrl+1)",
         "Buscar en la Store (Ctrl+2)" => "Search the Store (Ctrl+2)",
+        "Tus juegos (Ctrl+2)" => "Your games (Ctrl+2)",
+        "Buscar en la Store (Ctrl+1)" => "Search the Store (Ctrl+1)",
         "Descargas en curso (Ctrl+3)" => "Downloads in progress (Ctrl+3)",
         "CUENTA" => "ACCOUNT",
         "de" => "of",
@@ -1026,10 +1030,10 @@ impl eframe::App for App {
             // reservado: ayuda
         }
         if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Num1)) {
-            self.page = Page::Lib;
+            self.page = Page::Store;
         }
         if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Num2)) {
-            self.page = Page::Store;
+            self.page = Page::Lib;
         }
         if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Num3)) {
             self.page = Page::Dl;
@@ -1058,12 +1062,12 @@ impl eframe::App for App {
                     }
                 });
                 ui.menu_button(tr(&lang, "Ver"), |ui| {
-                    if ui.button(tr(&lang, "Biblioteca  Ctrl+1")).clicked() {
-                        self.page = Page::Lib;
+                    if ui.button(tr(&lang, "Tienda  Ctrl+1")).clicked() {
+                        self.page = Page::Store;
                         ui.close_menu();
                     }
-                    if ui.button(tr(&lang, "Tienda  Ctrl+2")).clicked() {
-                        self.page = Page::Store;
+                    if ui.button(tr(&lang, "Biblioteca  Ctrl+2")).clicked() {
+                        self.page = Page::Lib;
                         ui.close_menu();
                     }
                     if ui.button(tr(&lang, "Descargas  Ctrl+3")).clicked() {
@@ -1111,6 +1115,24 @@ impl eframe::App for App {
                         }
                     } else if ui.button(tr(&lang, "Vincular cuenta Meta")).clicked() {
                         self.do_link();
+                    }
+                    let srv = crate::server::status();
+                    let srv_btn = if srv.running { tr(&lang, "Detener") } else { tr(&lang, "Iniciar") };
+                    let srv_tip = if srv.running {
+                        format!(
+                            "http://{}:{}  token {}",
+                            srv.ip,
+                            crate::server::PORT,
+                            srv.token
+                        )
+                    } else {
+                        srv.error.clone()
+                    };
+                    let srv_resp = ui
+                        .button(format!("{} {}", tr(&lang, "Servidor visor"), srv_btn))
+                        .on_hover_text(srv_tip);
+                    if srv_resp.clicked() {
+                        crate::server::toggle();
                     }
                     let mut q = std::mem::take(&mut self.query);
                     let r = ui.add(
@@ -1162,8 +1184,8 @@ impl eframe::App for App {
             .exact_width(196.0)
             .show(ctx, |ui| {
                 for (p, label, tip) in [
-                    (Page::Lib, format!("📚 {}", tr(&lang, "Biblioteca")), tr(&lang, "Tus juegos (Ctrl+1)")),
-                    (Page::Store, format!("🏬 {}", tr(&lang, "Tienda")), tr(&lang, "Buscar en la Store (Ctrl+2)")),
+                    (Page::Store, format!("🏬 {}", tr(&lang, "Tienda")), tr(&lang, "Buscar en la Store (Ctrl+1)")),
+                    (Page::Lib, format!("📚 {}", tr(&lang, "Biblioteca")), tr(&lang, "Tus juegos (Ctrl+2)")),
                     (Page::Dl, format!("⬇ {}", tr(&lang, "Descargas")), tr(&lang, "Descargas en curso (Ctrl+3)")),
                 ] {
                     let mut text = label.to_string();
@@ -1859,21 +1881,10 @@ impl App {
 
     fn ui_downloads(&mut self, ui: &mut egui::Ui) {
         let lang = self.lang.clone();
-        let mut srv = crate::server::status();
         ui.horizontal(|ui| {
             if ui.button(tr(&lang, "Abrir carpeta")).clicked() {
                 std::fs::create_dir_all(store::download_dir()).ok();
                 open_folder(&store::download_dir());
-            }
-            ui.separator();
-            let btn = if srv.running { tr(&lang, "Detener") } else { tr(&lang, "Iniciar") };
-            if ui.button(format!("{} {}", tr(&lang, "Servidor visor"), btn)).clicked() {
-                srv = crate::server::toggle();
-            }
-            if srv.running {
-                ui.monospace(format!("http://{}:{}  token {}", srv.ip, crate::server::PORT, srv.token));
-            } else if !srv.error.is_empty() {
-                ui.label(egui::RichText::new(&srv.error).small().color(egui::Color32::RED));
             }
         });
         let snap = self.dm.snapshot();
