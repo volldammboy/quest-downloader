@@ -167,6 +167,25 @@ pub(crate) fn launch_chromium(
         .spawn()
 }
 
+/// Chromium sin ventana (mismo perfil): si la sesión vale, todo invisible.
+pub(crate) fn launch_chromium_headless(
+    exe: &str,
+    port: u16,
+    profile: &std::path::Path,
+    url: &str,
+) -> std::io::Result<Child> {
+    Command::new(exe)
+        .arg("--headless=new")
+        .arg("--disable-gpu")
+        .arg("--window-size=1280,2400")
+        .arg(format!("--remote-debugging-port={port}"))
+        .arg(format!("--user-data-dir={}", profile.display()))
+        .arg("--no-first-run")
+        .arg("--disable-external-intent-requests")
+        .arg(url)
+        .spawn()
+}
+
 fn launch_firefox(
     exe: &str,
     port: u16,

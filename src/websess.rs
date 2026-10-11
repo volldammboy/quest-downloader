@@ -267,8 +267,8 @@ fn fetch_pages(
     }
 }
 
-/// Ventana fuera de la pantalla (oculta pero visible para el sistema):
-/// la paginación sigue disparando sin molestar.
+/// Ventana pequeña en la esquina (sin foco): debe seguir visible en pantalla,
+/// si no el sistema suspende la paginación.
 fn hide_pid(pid: u32) {
     struct Ctx {
         pid: u32,
@@ -294,14 +294,19 @@ fn hide_pid(pid: u32) {
             LPARAM(&mut ctx as *mut Ctx as isize),
         );
         if ctx.hwnd != 0 {
+            let (x, y) = unsafe {
+                let cx = GetSystemMetrics(SM_CXSCREEN);
+                let cy = GetSystemMetrics(SM_CYSCREEN);
+                (cx - 400, cy - 320)
+            };
             let _ = SetWindowPos(
                 HWND(ctx.hwnd as *mut _),
                 HWND(std::ptr::null_mut()),
-                -10000,
-                0,
-                0,
-                0,
-                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                x,
+                y,
+                360,
+                240,
+                SWP_NOZORDER | SWP_NOACTIVATE,
             );
         }
     }
@@ -612,6 +617,30 @@ pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String, String
     Ok(out)
 }
 
+/// Comprueba en headless si la sesión ya lista pedidos (sin ventana).
+fn headless_listed(port: u16) -> bool {
+    let mut ws = match page_ws(port, Instant::now() + Duration::from_secs(25)) {
+        Ok((w, _)) => w,
+        Err(_) => return false,
+    };
+    let mut idc = 10u32;
+    let nav = serde_json::json!({"url": ORDERS_URL}).to_string();
+    if cdp_call(&mut ws, 20, "Page.navigate", &nav).is_err() {
+        return false;
+    }
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        if Instant::now() > deadline {
+            return false;
+        }
+        let t = eval(&mut ws, &mut idc, "document.body.innerText.slice(0,2000)");
+        if t.contains("N.º de pedido") || t.contains("Comprado") || t.contains("Order #") {
+            return true;
+        }
+        std::thread::sleep(Duration::from_secs(3));
+    }
+}
+
 /// Login web interactivo (bypass manual del error 500).
 pub fn login_interactive() -> Result<Vec<(String, String, String)>, String> {
     let port = {
@@ -635,6 +664,21 @@ pub fn login_interactive() -> Result<Vec<(String, String, String)>, String> {
         crate::browser::DefaultBrowser::Chromium(exe) => exe,
         _ => crate::meta_auth::edge_path()?,
     };
+    // 1) Invisible: si la sesión vale, sin ventana.
+    if let Ok(mut headless) =
+        crate::browser::launch_chromium_headless(&exe, port, &profile, ORDERS_URL)
+    {
+        if headless_listed(port) {
+            crate::meta_auth::note("pedidos", "sesión válida, invisible");
+            let r = capture_orders(port, 0);
+            let _ = headless.kill();
+            std::thread::sleep(Duration::from_secs(1));
+            return r;
+        }
+        let _ = headless.kill();
+        std::thread::sleep(Duration::from_secs(2));
+    }
+    // 2) Visible para loguearse.
     let mut child = crate::browser::launch_chromium(&exe, port, &profile, ORDERS_URL)
         .map_err(|e| format!("No se pudo abrir el navegador: {e}"))?;
     let r = capture_orders(port, child.id());
