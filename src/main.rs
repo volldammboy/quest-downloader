@@ -42,16 +42,15 @@ enum AsyncMsg {
     OwnCheck(String, bool),
 }
 
-/// Comprueba propiedad en Meta (plan descargable ⇒ entitled) y marca owned.
-fn spawn_own_check(tx: std::sync::mpsc::Sender<AsyncMsg>, id: String) {
+/// Comprueba propiedad en Meta (plan descargable ⇒ entitled), uno por uno.
+fn spawn_own_check(tx: std::sync::mpsc::Sender<AsyncMsg>, ids: Vec<String>) {
     std::thread::spawn(move || {
-        let ok = (|| -> Result<(), String> {
-            let token = meta_auth::profile_token()?;
-            meta_auth::plan(&token, &id)?;
-            Ok(())
-        })()
-        .is_ok();
-        tx.send(AsyncMsg::OwnCheck(id, ok)).ok();
+        let token = meta_auth::profile_token().ok();
+        let Some(token) = token else { return };
+        for id in ids {
+            let ok = meta_auth::plan(&token, &id).is_ok();
+            tx.send(AsyncMsg::OwnCheck(id, ok)).ok();
+        }
     });
 }
 
@@ -387,12 +386,18 @@ impl App {
                 AsyncMsg::Search(r) => {
                     self.results = r;
                     self.searching = false;
+                    if meta_auth::is_linked() {
+                        let ids: Vec<String> =
+                            self.results.iter().map(|a| a.id.clone()).collect();
+                        spawn_own_check(self.tx.clone(), ids);
+                    }
                 }
                 AsyncMsg::Sync(alias, uid, games) => self.apply_sync(alias, uid, games),
                 AsyncMsg::OwnCheck(id, ok) => {
                     if ok {
-                        store::library_set_owned(&id, true);
-                        self.refresh_library();
+                        if let Some(a) = self.results.iter_mut().find(|a| a.id == id) {
+                            a.owned = true;
+                        }
                     }
                 }
                 AsyncMsg::Plan(id, r) => {
@@ -562,6 +567,7 @@ fn to_store_app(g: &store::Game) -> oculusdb::StoreApp {
         store_url: g.store_url.clone(),
         image_url: g.info.get("image_url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
         platform: g.info.get("platform").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        owned: false,
     }
 }
 
@@ -1358,7 +1364,6 @@ impl eframe::App for App {
                                                 }),
                                             };
                                             store::library_add(&g);
-                                            spawn_own_check(tx.clone(), g.id.clone());
                                         }
                                     }
                                 }
@@ -1784,7 +1789,7 @@ impl App {
                                 ui.label(egui::RichText::new(plat).small().color(col).strong());
                             }
                         });
-                        if owned.contains(app.id.as_str()) {
+                        if app.owned || owned.contains(app.id.as_str()) {
                             ui.label(
                                 egui::RichText::new(tr(&lang, "Comprado"))
                                     .small()
@@ -1836,7 +1841,6 @@ impl App {
                 store::library_add(&g);
                 self.refresh_library();
                 self.ensure_covers();
-                spawn_own_check(self.tx.clone(), g.id.clone());
                 if dl {
                     self.page = Page::Dl;
                     self.open_download_dialog(g);

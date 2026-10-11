@@ -28,6 +28,7 @@ pub struct StoreApp {
     pub store_url: String,
     pub image_url: String,
     pub platform: String, // "quest" | "rift" | ""
+    pub owned: bool,
 }
 
 fn s(v: Option<&Value>) -> String {
@@ -104,6 +105,7 @@ pub fn search_store(query: &str, limit: usize) -> Result<Vec<StoreApp>, String> 
                 Some(2) => "rift".into(),
                 _ => String::new(),
             },
+            owned: false,
         });
     }
     Ok(apps)
