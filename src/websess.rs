@@ -280,8 +280,20 @@ fn fetch_pages(
         };
         let before = out.len();
         parse_orders(body, out);
-        crate::meta_auth::note("pedidos", &format!("fetch pág {page}: {} juegos", out.len()));
         let v: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
+        let ecount = v
+            .pointer("/data/node/orders_rmas_and_subscriptions/edges")
+            .and_then(|e| e.as_array())
+            .map(|e| e.len())
+            .unwrap_or(0);
+        if page == 0 {
+            let p = crate::store::app_dir().join("pedidos-fetch0.json");
+            if let Some(pp) = p.parent() {
+                std::fs::create_dir_all(pp).ok();
+            }
+            std::fs::write(&p, body).ok();
+        }
+        crate::meta_auth::note("pedidos", &format!("fetch pág {page}: {} juegos ({ecount} edges)", out.len()));
         let edges = v
             .pointer("/data/node/orders_rmas_and_subscriptions/edges")
             .and_then(|e| e.as_array());
