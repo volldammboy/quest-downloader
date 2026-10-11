@@ -382,6 +382,8 @@ fn take_query() -> Option<String> {
 fn drain(ws: &mut crate::meta_auth::Ws, idc: &mut u32, secs: u64, out: &mut Vec<(String, String, String)>, stat: &mut (u32, u32, u32)) {
     let t0 = Instant::now();
     let mut wanted: Vec<(String, String)> = vec![]; // (requestId, método+url)
+    let mut sent: Vec<(u64, String, String)> = vec![]; // (id CDP, requestId, url)
+    let mut dbg_n = 0u32;
     loop {
         if t0.elapsed() >= Duration::from_secs(secs) {
             break;
@@ -405,12 +407,16 @@ fn drain(ws: &mut crate::meta_auth::Ws, idc: &mut u32, secs: u64, out: &mut Vec<
                 .and_then(|x| x.as_str())
                 .unwrap_or("");
             let rid = params.get("requestId").and_then(|x| x.as_str()).unwrap_or("");
+            let m = params
+                .get("request")
+                .and_then(|r| r.get("method"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("?");
+            if m == "POST" {
+                let tail: String = url.chars().rev().take(110).collect::<String>().chars().rev().collect();
+                crate::meta_auth::note("pedidos", &format!("POST {tail}"));
+            }
             if (url.contains("/a/fl") || url.contains("api/graphql")) && !url.contains("rsrc.php") {
-                let m = params
-                    .get("request")
-                    .and_then(|r| r.get("method"))
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("?");
                 wanted.push((rid.to_string(), format!("{m} {url}")));
                 stat.0 += 1;
                 // Guarda el cuerpo de la consulta de datos para paginarla luego.
@@ -441,6 +447,8 @@ fn drain(ws: &mut crate::meta_auth::Ws, idc: &mut u32, secs: u64, out: &mut Vec<
                 stat.1 += 1;
                 *idc += 1;
                 let gid = *idc;
+                let u = wanted.iter().find(|(id, _)| id == rid).map(|(_, u)| u.clone()).unwrap_or_default();
+                sent.push((gid as u64, rid.to_string(), u));
                 let _ = ws.send_text(&format!(
                     r#"{{"id":{gid},"method":"Network.getResponseBody","params":{{"requestId":"{rid}"}}}}"#
                 ));
@@ -453,7 +461,18 @@ fn drain(ws: &mut crate::meta_auth::Ws, idc: &mut u32, secs: u64, out: &mut Vec<
                 .and_then(|x| x.get("body"))
                 .and_then(|x| x.as_str())
             {
-                crate::meta_auth::note("pedidos", &format!("cuerpo len={}", body.len()));
+                let gid = v.get("id").and_then(|x| x.as_u64()).unwrap_or(0);
+                let u = sent.iter().find(|(g, _, _)| *g == gid).map(|(_, _, u)| u.clone()).unwrap_or_default();
+                let tail: String = u.chars().rev().take(80).collect::<String>().chars().rev().collect();
+                crate::meta_auth::note("pedidos", &format!("cuerpo len={} {tail}", body.len()));
+                if dbg_n < 4 {
+                    let p = crate::store::app_dir().join(format!("pedidos-dbg-{dbg_n}.txt"));
+                    if let Some(pp) = p.parent() {
+                        std::fs::create_dir_all(pp).ok();
+                    }
+                    std::fs::write(&p, format!("URL: {u}\n\n{body}")).ok();
+                    dbg_n += 1;
+                }
                 if body.len() > 500 {
                     stat.2 += 1;
                     // Muestra para afinar el filtro de DLCs (una vez por arranque).
@@ -483,7 +502,10 @@ pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String, String
     let mut idc = 100u32;
     cdp_call(&mut ws, 10, "Network.enable", "{}")?;
     // Sin caché: si no, las respuestas vienen 304/vacías y no hay cuerpos.
-    let _ = cdp_call(&mut ws, 12, "Network.setCacheDisabled", r#"{"cacheDisabled":true}"#);
+    match cdp_call(&mut ws, 12, "Network.setCacheDisabled", r#"{"cacheDisabled":true}"#) {
+        Ok(_) => crate::meta_auth::note("pedidos", "caché CDP off"),
+        Err(e) => crate::meta_auth::note("pedidos", &format!("caché CDP err: {e}")),
+    }
     crate::meta_auth::note("pedidos", &format!("pestaña {here}"));
     // Siempre carga fresca: la pestaña restaurada enseña caché sin red.
     let nav = serde_json::json!({"url": ORDERS_URL}).to_string();
@@ -551,6 +573,17 @@ pub fn login_interactive() -> Result<Vec<(String, String, String)>, String> {
     };
     let profile = web_profile();
     std::fs::create_dir_all(&profile).ok();
+    // Limpia cachés de disco (conserva cookies/sesión): cuerpos siempre frescos.
+    for d in [
+        "Default/Cache",
+        "Default/Code Cache",
+        "Default/GPUCache",
+        "Default/Service Worker",
+        "ShaderCache",
+        "GrShaderCache",
+    ] {
+        std::fs::remove_dir_all(profile.join(d)).ok();
+    }
     let exe = match crate::browser::detect() {
         crate::browser::DefaultBrowser::Chromium(exe) => exe,
         _ => crate::meta_auth::edge_path()?,
