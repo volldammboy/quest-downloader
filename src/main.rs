@@ -41,6 +41,11 @@ enum AsyncMsg {
     Cover(String, Vec<u8>),
     Linked(Result<String, String>),
     ImportOrders(Result<Vec<meta_auth::LibGame>, String>),
+    PlatformDone((u32, u32)),
+}
+
+fn norm_name(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
 struct App {
@@ -56,6 +61,7 @@ struct App {
     syncing: bool,
     linking: bool,
     bypass_500: bool,
+    plat_checked: bool,
     status: String,
     rx: mpsc::Receiver<AsyncMsg>,
     tx: mpsc::Sender<AsyncMsg>,
@@ -94,6 +100,7 @@ impl App {
             syncing: false,
             linking: false,
             bypass_500: false,
+            plat_checked: false,
             status: String::new(),
             rx,
             tx,
@@ -298,10 +305,20 @@ impl App {
 
     fn apply_import_orders(&mut self, games: Vec<meta_auth::LibGame>) {
         // Alta sin borrar: no toca lo que ya hay (el sync con 500 no vacía nada).
+        // Sin repetidos por nombre (bundles expandidos, ediciones).
+        let mut known: std::collections::HashSet<String> = store::library_all()
+            .iter()
+            .map(|g| norm_name(&g.name))
+            .collect();
         for g in &games {
+            let name = if g.name.is_empty() { "?".into() } else { g.name.clone() };
+            let norm = norm_name(&name);
+            if !known.insert(norm) {
+                continue;
+            }
             let game = store::Game {
                 id: g.id.clone(),
-                name: if g.name.is_empty() { "?".into() } else { g.name.clone() },
+                name,
                 package: g.package.clone(),
                 price: String::new(),
                 size: String::new(),
@@ -310,13 +327,14 @@ impl App {
                 owned: true,
                 verified_at: 0,
                 art_url: g.cover.clone(),
-                info: serde_json::json!({ "genres": g.genres }),
+                info: serde_json::json!({ "genres": g.genres, "platform": "" }),
             };
             store::library_add(&game);
         }
         self.syncing = false;
         self.refresh_library();
         self.ensure_covers();
+        self.verify_platforms();
     }
 
     fn apply_sync(&mut self, alias: String, uid: String, games: Vec<meta_auth::LibGame>) {
@@ -381,6 +399,7 @@ impl App {
                     full.store_url = pick.store_url;
                     full.info = serde_json::json!({
                         "genres": pick.genres, "image_url": pick.image_url,
+                        "platform": pick.platform,
                     });
                     store::library_add(&full);
                 }
@@ -390,6 +409,80 @@ impl App {
         self.status.clear();
         self.refresh_library();
         self.ensure_covers();
+    }
+
+    /// Expande bundles a títulos y expulsa juegos PCVR (Rift).
+    /// Usa OculusDB (terceros, sin límite de Meta) con caché en la ficha.
+    fn verify_platforms(&self) {
+        let tx = self.tx.clone();
+        let lang = self.lang.clone();
+        std::thread::spawn(move || {
+            let mut added = 0u32;
+            let mut removed = 0u32;
+            // 1) Bundles → títulos individuales.
+            for (bid, _bname) in crate::websess::take_bundles() {
+                let Some(b) = oculusdb::fetch_item(&bid) else { continue };
+                for cid in b.bundle {
+                    if store::library_all().iter().any(|g| g.id == cid) {
+                        continue;
+                    }
+                    let Some(it) = oculusdb::fetch_item(&cid) else { continue };
+                    if it.otype != "Application" || it.binary == 2 {
+                        continue;
+                    }
+                    let name = if it.name.is_empty() { cid.clone() } else { it.name.clone() };
+                    let norm = norm_name(&name);
+                    if store::library_all().iter().any(|g| norm_name(&g.name) == norm) {
+                        continue;
+                    }
+                    store::library_add(&store::Game {
+                        id: cid.clone(),
+                        name,
+                        package: String::new(),
+                        price: String::new(),
+                        size: String::new(),
+                        publisher: String::new(),
+                        store_url: format!("https://www.meta.com/experiences/p/{cid}"),
+                        owned: true,
+                        verified_at: 0,
+                        art_url: String::new(),
+                        info: serde_json::json!({ "platform": "quest" }),
+                    });
+                    added += 1;
+                }
+            }
+            // 2) Plataforma de lo listado; fuera PCVR.
+            for g in store::library_all() {
+                if !g.owned {
+                    continue;
+                }
+                let plat = g.info.get("platform").and_then(|v| v.as_str()).unwrap_or("");
+                if plat == "rift" {
+                    store::library_remove(&g.id);
+                    std::fs::remove_file(store::covers_dir().join(format!("{}.jpg", g.id))).ok();
+                    removed += 1;
+                    continue;
+                }
+                if plat.is_empty() {
+                    if let Some(it) = oculusdb::fetch_item(&g.id) {
+                        if it.binary == 2 {
+                            store::library_remove(&g.id);
+                            std::fs::remove_file(store::covers_dir().join(format!("{}.jpg", g.id))).ok();
+                            removed += 1;
+                        } else if it.otype == "Application" {
+                            store::library_set_platform(&g.id, "quest");
+                        }
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(150));
+                }
+            }
+            crate::meta_auth::note(
+                "plataforma",
+                &format!("verificado: +{added} -{removed} rift"),
+            );
+            let _ = lang;
+            tx.send(AsyncMsg::PlatformDone((added, removed))).ok();
+        });
     }
 
     fn do_unlink(&mut self) {
@@ -495,6 +588,16 @@ impl App {
                         self.syncing = false;
                         self.status = format!("{}: {}", tr(&lang, "Error importando"), e.chars().take(120).collect::<String>());
                         crate::meta_auth::note("pedidos", &format!("fallo: {}", e.chars().take(160).collect::<String>()));
+                    }
+                },
+                AsyncMsg::PlatformDone((added, removed)) => {
+                    self.refresh_library();
+                    self.ensure_covers();
+                    if added + removed > 0 {
+                        self.status = format!(
+                            "{} +{added} -{removed} Rift",
+                            tr(&lang, "Verificado:")
+                        );
                     }
                 },
                 AsyncMsg::Plan(id, r) => {
@@ -849,6 +952,7 @@ fn tr(lang: &str, es: &str) -> String {
         "Importando pedidos… sigue en la ventana" => "Importing orders… stay in the window",
         "Error 500, pulsa aquí para bypass" => "Error 500, click here to bypass",
         "Sin juegos capturados" => "No games captured",
+        "Verificado:" => "Verified:",
         "Juegos importados:" => "Games imported:",
         "Error al vincular" => "Link error",
         "Error importando" => "Import error",
@@ -1078,6 +1182,10 @@ fn mb(bytes: u64) -> String {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll(ctx);
+        if !self.plat_checked {
+            self.plat_checked = true;
+            self.verify_platforms();
+        }
         let lang = self.lang.clone();
         let (down, hpos) =
             ctx.input(|i| (i.pointer.primary_down(), i.pointer.hover_pos()));

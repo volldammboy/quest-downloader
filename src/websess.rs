@@ -366,8 +366,70 @@ fn hide_pid(pid: u32) {
     }
 }
 
+/// Bundles vistos en pedidos (para expandir a títulos individuales).
+static BUNDLES: std::sync::OnceLock<std::sync::Mutex<Vec<(String, String)>>> =
+    std::sync::OnceLock::new();
+
+fn save_bundle(id: &str, name: &str) {
+    let mut b = BUNDLES
+        .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+        .lock()
+        .unwrap();
+    if !b.iter().any(|(i, _)| i == id) {
+        b.push((id.to_string(), name.to_string()));
+    }
+}
+
+pub fn take_bundles() -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = BUNDLES
+        .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+        .lock()
+        .unwrap()
+        .drain(..)
+        .collect();
+    // Persistidos de una captura anterior.
+    let f = crate::store::app_dir().join("bundles.json");
+    if let Ok(raw) = std::fs::read(&f) {
+        if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&raw) {
+            if let Some(a) = v.as_array() {
+                for x in a {
+                    if let (Some(id), Some(name)) = (
+                        x.get("id").and_then(|n| n.as_str()),
+                        x.get("name").and_then(|n| n.as_str()),
+                    ) {
+                        if !out.iter().any(|(i, _)| i == id) {
+                            out.push((id.to_string(), name.to_string()));
+                        }
+                    }
+                }
+            }
+        }
+        std::fs::remove_file(&f).ok();
+    }
+    out
+}
+
+fn save_bundles_file(items: &[(String, String)]) {
+    if items.is_empty() {
+        return;
+    }
+    let v: Vec<serde_json::Value> = items
+        .iter()
+        .map(|(id, name)| serde_json::json!({"id": id, "name": name}))
+        .collect();
+    if let Some(p) = crate::store::app_dir().parent() {
+        std::fs::create_dir_all(p).ok();
+    }
+    std::fs::write(
+        crate::store::app_dir().join("bundles.json"),
+        serde_json::to_string(&v).unwrap_or_default(),
+    )
+    .ok();
+}
+
 /// Un pedido = nodo con `app_store_item` + `status`.
-/// Solo juegos completos (`XSHOCApplication`), sin cancelados ni DLCs/bundles.
+/// Solo juegos completos (`XSHOCApplication`), sin cancelados ni DLCs.
+/// Los bundles se guardan aparte para expandirlos.
 fn parse_orders(body: &str, out: &mut Vec<(String, String, String)>) {
     if !body.contains("app_store_item") {
         return;
@@ -385,12 +447,16 @@ fn parse_orders(body: &str, out: &mut Vec<(String, String, String)>) {
                 {
                     let skip = matches!(status, "CANCELED" | "REFUNDED" | "REVERSED" | "FAILED");
                     let ty = item.get("__typename").and_then(|x| x.as_str()).unwrap_or("");
-                    if !skip && ty == "XSHOCApplication" {
-                        let id = item.get("id").and_then(|x| x.as_str()).unwrap_or("");
-                        let name = item
-                            .get("display_name")
-                            .and_then(|x| x.as_str())
-                            .unwrap_or("");
+                    let id = item.get("id").and_then(|x| x.as_str()).unwrap_or("");
+                    let name = item
+                        .get("display_name")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("");
+                    if id.is_empty() || skip {
+                        // (sigue barriendo hijos)
+                    } else if ty.contains("Bundle") || ty.contains("Pack") {
+                        save_bundle(id, name);
+                    } else if ty == "XSHOCApplication" {
                         let cover = item
                             .get("icon_image")
                             .and_then(|x| x.get("uri"))
@@ -580,6 +646,10 @@ fn dom_extract(
         if matches!(status.as_str(), "CANCELED" | "REFUNDED" | "REVERSED" | "FAILED") {
             continue;
         }
+        if ty.contains("Bundle") || ty.contains("Pack") {
+            save_bundle(id, name);
+            continue;
+        }
         if ty != "XSHOCApplication" {
             continue;
         }
@@ -669,6 +739,9 @@ pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String, String
         "pedidos",
         &format!("resumen req={} fin={} cuerpos={} juegos={}", stat.0, stat.1, stat.2, out.len()),
     );
+    // Guarda bundles para expandirlos aunque se cierre QD.
+    save_bundles_file(&take_bundles());
+    // (take los vacía de memoria; verify los relee del fichero)
     Ok(out)
 }
 

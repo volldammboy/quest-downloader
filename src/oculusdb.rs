@@ -111,6 +111,52 @@ pub fn search_store(query: &str, limit: usize) -> Result<Vec<StoreApp>, String> 
     Ok(apps)
 }
 
+/// Ficha mínima por id: tipo, binario, nombre e hijos (bundles).
+#[derive(Clone, Debug, Default)]
+pub struct OculusItem {
+    pub otype: String,
+    pub binary: u64,
+    pub name: String,
+    pub bundle: Vec<String>,
+}
+
+pub fn fetch_item(id: &str) -> Option<OculusItem> {
+    if id.trim().is_empty() {
+        return None;
+    }
+    let v: Value = client()
+        .get(format!("{OCULUSDB}/api/v1/id/{id}"))
+        .send()
+        .ok()?
+        .json()
+        .ok()?;
+    if v.as_object().map(|o| o.is_empty()).unwrap_or(true) {
+        return None;
+    }
+    let name = v
+        .get("displayName")
+        .or_else(|| v.get("appName"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let mut bundle = vec![];
+    if let Some(items) = v.get("bundle_items").and_then(|x| x.as_array()) {
+        for it in items {
+            if let Some(cid) = it.get("id").and_then(|x| x.as_str()) {
+                if !cid.is_empty() {
+                    bundle.push(cid.to_string());
+                }
+            }
+        }
+    }
+    Some(OculusItem {
+        otype: s(v.get("__OculusDBType")),
+        binary: v.get("binaryType").and_then(|x| x.as_u64()).unwrap_or(0),
+        name,
+        bundle,
+    })
+}
+
 pub fn artwork_list(app_id: &str) -> Vec<String> {
     let vars = serde_json::json!({ "itemId": app_id, "hmdType": "MONTEREY" }).to_string();
     let mut form = std::collections::HashMap::new();

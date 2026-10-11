@@ -143,17 +143,29 @@ fn now() -> i64 {
 
 pub fn library_add(game: &Game) {
     let Ok(cx) = conn() else { return };
-    let prev: Option<(i64, i64, String)> = cx
+    let prev: Option<(i64, i64, String, String)> = cx
         .query_row(
-            "SELECT owned, verified_at, art_url FROM library WHERE id=?",
+            "SELECT owned, verified_at, art_url, data FROM library WHERE id=?",
             [&game.id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .ok();
-    let (owned, verified_at, mut art) =
-        prev.unwrap_or((0, 0, String::new()));
+    let (owned, verified_at, mut art, prev_data) =
+        prev.unwrap_or((0, 0, String::new(), String::new()));
     if !game.art_url.is_empty() {
         art = game.art_url.clone();
+    }
+    let mut platform = game
+        .info
+        .get("platform")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    if platform.is_empty() {
+        platform = serde_json::from_str::<Value>(&prev_data)
+            .ok()
+            .and_then(|v| v.get("platform").and_then(|x| x.as_str()).map(|s| s.to_string()))
+            .unwrap_or_default();
     }
     let blob = serde_json::to_string(&serde_json::json!({
         "id": game.id, "name": game.name, "package": game.package,
@@ -161,7 +173,7 @@ pub fn library_add(game: &Game) {
         "store_url": game.store_url,
         "genres": game.info.get("genres").cloned().unwrap_or(Value::Null),
         "image_url": game.info.get("image_url").cloned().unwrap_or(Value::Null),
-        "art_url": art,
+        "art_url": art, "platform": platform,
     }))
     .unwrap_or_default();
     cx.execute(
@@ -201,6 +213,23 @@ pub fn library_set_art(app_id: &str, url: &str) {
             params![url, app_id],
         )
         .ok();
+    }
+}
+
+pub fn library_set_platform(app_id: &str, platform: &str) {
+    if let Ok(cx) = conn() {
+        let data: String = cx
+            .query_row("SELECT data FROM library WHERE id=?", [app_id], |r| r.get(0))
+            .unwrap_or_default();
+        let mut v: Value = serde_json::from_str(&data).unwrap_or(Value::Null);
+        if let Some(o) = v.as_object_mut() {
+            o.insert("platform".into(), Value::String(platform.into()));
+            cx.execute(
+                "UPDATE library SET data=? WHERE id=?",
+                params![v.to_string(), app_id],
+            )
+            .ok();
+        }
     }
 }
 
