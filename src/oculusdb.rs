@@ -157,6 +157,31 @@ pub fn fetch_item(id: &str) -> Option<OculusItem> {
     })
 }
 
+/// Carátula QSDB por id (URL predecible, sin límite de Meta).
+pub fn qsdb_cover(id: &str, kind: &str) -> String {
+    format!("https://queststoredb.com/media/{id}_{kind}.webp")
+}
+
+/// ¿Cross-buy PC VR según QSDB? None = red caída (reintentar luego).
+pub fn qsdb_has_crossbuy(id: &str) -> Option<bool> {
+    if id.trim().is_empty() {
+        return None;
+    }
+    let resp = client()
+        .get(format!("https://queststoredb.com/game/x-{id}/"))
+        .send()
+        .ok()?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Some(false);
+    }
+    if !resp.status().is_success() {
+        return None;
+    }
+    resp.text()
+        .ok()
+        .map(|h| h.contains("app-details-extra-has-cross-buy"))
+}
+
 pub fn artwork_list(app_id: &str) -> Vec<String> {
     let vars = serde_json::json!({ "itemId": app_id, "hmdType": "MONTEREY" }).to_string();
     let mut form = std::collections::HashMap::new();

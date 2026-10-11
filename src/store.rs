@@ -217,13 +217,17 @@ pub fn library_set_art(app_id: &str, url: &str) {
 }
 
 pub fn library_set_platform(app_id: &str, platform: &str) {
+    library_set_info(app_id, "platform", platform);
+}
+
+pub fn library_set_info(app_id: &str, key: &str, value: &str) {
     if let Ok(cx) = conn() {
         let data: String = cx
             .query_row("SELECT data FROM library WHERE id=?", [app_id], |r| r.get(0))
             .unwrap_or_default();
         let mut v: Value = serde_json::from_str(&data).unwrap_or(Value::Null);
         if let Some(o) = v.as_object_mut() {
-            o.insert("platform".into(), Value::String(platform.into()));
+            o.insert(key.into(), Value::String(value.into()));
             cx.execute(
                 "UPDATE library SET data=? WHERE id=?",
                 params![v.to_string(), app_id],

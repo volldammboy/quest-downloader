@@ -159,6 +159,9 @@ impl App {
                 if !g.art_url.is_empty() {
                     urls.push(g.art_url.clone());
                 }
+                // QSDB: carátulas predecibles sin límite de Meta.
+                urls.push(oculusdb::qsdb_cover(&g.id, "cover_square"));
+                urls.push(oculusdb::qsdb_cover(&g.id, "cover_landscape"));
                 urls.push(format!(
                     "https://oculusdb.rui2015.me/cdn/images/{}",
                     g.id
@@ -491,6 +494,59 @@ impl App {
             crate::meta_auth::note(
                 "plataforma",
                 &format!("verificado: +{added} -{removed} rift"),
+            );
+            // 3) Cross-buy: gemelo en la otra plataforma (QSDB lo confirma).
+            for g in store::library_all() {
+                if g.info.get("xbuy").and_then(|v| v.as_str()).is_some() {
+                    continue;
+                }
+                let my_plat = g.info.get("platform").and_then(|v| v.as_str()).unwrap_or("");
+                let want = if my_plat == "rift" { "quest" } else { "rift" };
+                let norm = norm_name(&g.name);
+                let twin = oculusdb::search_store(&g.name, 10).ok().and_then(|list| {
+                    list.into_iter().find(|a| {
+                        a.platform == want && norm_name(&a.name) == norm
+                    })
+                });
+                let Some(twin) = twin else {
+                    store::library_set_info(&g.id, "xbuy", "false");
+                    continue;
+                };
+                // La prueba es la página QSDB del lado Quest.
+                let qid = if want == "rift" { g.id.clone() } else { twin.id.clone() };
+                match oculusdb::qsdb_has_crossbuy(&qid) {
+                    Some(true) => {
+                        store::library_set_info(&g.id, "xbuy", "true");
+                        let tnorm = norm_name(&twin.name);
+                        let exists = store::library_all().iter().any(|r| {
+                            norm_name(&r.name) == tnorm
+                                && r.info.get("platform").and_then(|v| v.as_str()).unwrap_or("") == want
+                        });
+                        if !exists {
+                            store::library_add(&store::Game {
+                                id: twin.id.clone(),
+                                name: if twin.name.is_empty() { g.name.clone() } else { twin.name.clone() },
+                                package: twin.package.clone(),
+                                price: String::new(),
+                                size: String::new(),
+                                publisher: twin.publisher.clone(),
+                                store_url: format!("https://www.meta.com/experiences/p/{}", twin.id),
+                                owned: true,
+                                verified_at: 0,
+                                art_url: String::new(),
+                                info: serde_json::json!({ "platform": want, "xbuy": "true" }),
+                            });
+                            added += 1;
+                        }
+                    }
+                    Some(false) => store::library_set_info(&g.id, "xbuy", "false"),
+                    None => {}
+                }
+                std::thread::sleep(std::time::Duration::from_millis(150));
+            }
+            crate::meta_auth::note(
+                "plataforma",
+                &format!("verificado xbuy: +{added}"),
             );
             let _ = lang;
             tx.send(AsyncMsg::PlatformDone((added, removed))).ok();
