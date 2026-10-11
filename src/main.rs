@@ -594,6 +594,8 @@ impl App {
     fn start_download(&mut self, app: &store::Game, extra: Vec<meta_auth::PlanFile>) {
         let folder = game_folder(&app.name);
         std::fs::create_dir_all(&folder).ok();
+        // APK en la raíz, datos en obb/ (todos los juegos con datos aparte).
+        std::fs::create_dir_all(folder.join("obb")).ok();
         oculusdb::save_json(&folder.join(format!("{}.json", app.id)), &to_store_app(app));
         let tx = self.tx.clone();
         let dm = self.dm.clone();
@@ -615,7 +617,11 @@ impl App {
                         continue;
                     }
                     let url = meta_auth::file_url(f, &delivery)?;
-                    let dest = folder.join(&name);
+                    let dest = if name.to_lowercase().ends_with(".apk") {
+                        folder.join(&name)
+                    } else {
+                        folder.join("obb").join(&name)
+                    };
                     let jid = dm.add(&dm, format!("{} · {name}", plan.name), url, dest);
                     tx.send(AsyncMsg::Linked(Ok(format!("JOB:{app_id}:{jid}")))).ok();
                 }

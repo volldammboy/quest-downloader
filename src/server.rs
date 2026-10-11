@@ -150,20 +150,33 @@ fn games_json(token: &str) -> String {
         if let Ok(md) = std::fs::metadata(dir.join("base.apk")) {
             add("base.apk", md.len());
         }
-        if let Ok(rd) = std::fs::read_dir(&dir) {
-            let mut obbs: Vec<_> = rd
-                .flatten()
-                .map(|x| x.path())
-                .filter(|p| {
-                    p.extension().and_then(|x| x.to_str()) == Some("obb") && p.is_file()
-                })
-                .collect();
-            obbs.sort();
-            for p in obbs {
-                if let (Some(n), Ok(md)) = (p.file_name().and_then(|n| n.to_str()), std::fs::metadata(&p)) {
-                    add(n, md.len());
+        // Datos: subcarpeta obb/ (nuevo) o raíz (descargas antiguas).
+        let mut obbs: Vec<(String, u64)> = vec![];
+        for (sub, prefix) in [("obb", "obb/"), ("", "")] {
+            let d = if sub.is_empty() { dir.clone() } else { dir.join(sub) };
+            if let Ok(rd) = std::fs::read_dir(&d) {
+                let mut v: Vec<_> = rd
+                    .flatten()
+                    .map(|x| x.path())
+                    .filter(|p| {
+                        p.extension().and_then(|x| x.to_str()) == Some("obb") && p.is_file()
+                    })
+                    .collect();
+                v.sort();
+                for p in v {
+                    if let (Some(n), Ok(md)) =
+                        (p.file_name().and_then(|n| n.to_str()), std::fs::metadata(&p))
+                    {
+                        let key = format!("{prefix}{n}");
+                        if !obbs.iter().any(|(k, _)| k == &key) {
+                            obbs.push((key, md.len()));
+                        }
+                    }
                 }
             }
+        }
+        for (n, sz) in obbs {
+            add(&n, sz);
         }
         if !first {
             out.push(',');
@@ -285,7 +298,13 @@ fn handle(req: tiny_http::Request, token: &str) {
     if let Some(rest) = path.strip_prefix("/f/") {
         let mut parts = rest.splitn(2, '/');
         let (folder, file) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
-        if folder.is_empty() || folder.contains("..") || file.is_empty() || file.contains("..") || file.contains('/') {
+        if folder.is_empty() || folder.contains("..") || file.is_empty() || file.contains("..") {
+            let _ = req.respond(tiny_http::Response::empty(400));
+            return;
+        }
+        // file: "base.apk" o "obb/<nombre>.obb".
+        let inner = file.strip_prefix("obb/").unwrap_or(file);
+        if inner.is_empty() || inner.contains('/') || inner.contains('\\') {
             let _ = req.respond(tiny_http::Response::empty(400));
             return;
         }
