@@ -198,11 +198,17 @@ fn fetch_pages(
     }
     let vi = match pairs.iter().position(|(k, _)| k == "variables") {
         Some(i) => i,
-        None => return,
+        None => {
+            crate::meta_auth::note("pedidos", "fetch: sin variables en la consulta");
+            return;
+        }
     };
     let mut vars: serde_json::Value = match serde_json::from_str(&pairs[vi].1) {
         Ok(v) => v,
-        Err(_) => return,
+        Err(_) => {
+            crate::meta_auth::note("pedidos", "fetch: variables rotas (postData truncado?)");
+            return;
+        }
     };
     if let Some(o) = vars.as_object_mut() {
         o.insert("first".into(), serde_json::json!(20));
@@ -229,17 +235,28 @@ fn fetch_pages(
             .join("&");
         let js_body = serde_json::to_string(&body).unwrap_or_default();
         let expr = format!(
-            "(async () => {{ const r = await fetch('https://www.meta.com/api/graphql/', {{method:'POST', headers:{{'Content-Type':'application/x-www-form-urlencoded'}}, credentials:'include', body: {js_body}}}); return (await r.text()).slice(0, 2000000); }})()"
+            "(async () => {{ try {{ const r = await fetch('https://www.meta.com/api/graphql/', {{method:'POST', headers:{{'Content-Type':'application/x-www-form-urlencoded'}}, credentials:'include', body: {js_body}}}); const t = await r.text(); return ('HTTP'+r.status+' ').slice(0,12)+t.slice(0, 2000000); }} catch(e) {{ return 'JSERR:'+e; }} }})()"
         );
         let text = eval_async(ws, idc, &expr);
         if text.is_empty() {
             crate::meta_auth::note("pedidos", &format!("fetch pág {page}: vacío"));
             break;
         }
+        if text.starts_with("JSERR") {
+            crate::meta_auth::note("pedidos", &format!("fetch pág {page}: {}", text.chars().take(160).collect::<String>()));
+            break;
+        }
+        let body = match text.find('{') {
+            Some(i) => &text[i..],
+            None => {
+                crate::meta_auth::note("pedidos", &format!("fetch pág {page}: sin JSON"));
+                break;
+            }
+        };
         let before = out.len();
-        parse_orders(&text, out);
+        parse_orders(body, out);
         crate::meta_auth::note("pedidos", &format!("fetch pág {page}: {} juegos", out.len()));
-        let v: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+        let v: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
         let edges = v
             .pointer("/data/node/orders_rmas_and_subscriptions/edges")
             .and_then(|e| e.as_array());
@@ -433,6 +450,7 @@ fn drain(ws: &mut crate::meta_auth::Ws, idc: &mut u32, secs: u64, out: &mut Vec<
                     {
                         if pd.contains("SubscriptionsQuery") {
                             save_query(pd);
+                            crate::meta_auth::note("pedidos", &format!("consulta POST len={}", pd.len()));
                         }
                     }
                 }
