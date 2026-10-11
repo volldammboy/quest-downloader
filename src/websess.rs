@@ -12,6 +12,12 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 const ORDERS_URL: &str =
     "https://www.meta.com/my/orders/?order_type=digital_products&timeFilter=ALL_TIME";
 
+/// Perfil persistente del navegador temporal: Meta reconoce el dispositivo y
+/// no pide código en cada intento. Vive en `data/` (no se sube a GitHub).
+pub fn web_profile() -> std::path::PathBuf {
+    crate::store::app_dir().join("web-profile")
+}
+
 fn cdp_call(
     ws: &mut crate::meta_auth::Ws,
     id: u32,
@@ -227,11 +233,14 @@ fn drain(ws: &mut crate::meta_auth::Ws, idc: &mut u32, secs: u64, out: &mut Vec<
 /// Espera login en pedidos, minimiza la ventana, autoscroll y captura (id, nombre).
 pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String)>, String> {
     let deadline = Instant::now() + Duration::from_secs(900);
-    let mut ws = page_ws(port, Instant::now() + Duration::from_secs(60))?.0;
+    let (mut ws, here) = page_ws(port, Instant::now() + Duration::from_secs(60))?;
     let mut idc = 100u32;
     cdp_call(&mut ws, 10, "Network.enable", "{}")?;
-    let nav = serde_json::json!({"url": ORDERS_URL}).to_string();
-    cdp_call(&mut ws, 11, "Page.navigate", &nav)?;
+    // No recargues si ya estás en pedidos: pisarías el formulario del código.
+    if !here.contains("meta.com/my/orders") {
+        let nav = serde_json::json!({"url": ORDERS_URL}).to_string();
+        cdp_call(&mut ws, 11, "Page.navigate", &nav)?;
+    }
     loop {
         if Instant::now() > deadline {
             return Err("sin login en pedidos".into());
@@ -284,7 +293,7 @@ pub fn login_interactive() -> Result<Vec<(String, String)>, String> {
         let s = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
         s.local_addr().map_err(|e| e.to_string())?.port()
     };
-    let profile = std::env::temp_dir().join(format!("qd-web-{}", std::process::id()));
+    let profile = web_profile();
     std::fs::create_dir_all(&profile).ok();
     let exe = match crate::browser::detect() {
         crate::browser::DefaultBrowser::Chromium(exe) => exe,
@@ -294,6 +303,6 @@ pub fn login_interactive() -> Result<Vec<(String, String)>, String> {
         .map_err(|e| format!("No se pudo abrir el navegador: {e}"))?;
     let r = capture_orders(port, child.id());
     let _ = child.kill();
-    std::fs::remove_dir_all(&profile).ok();
+    std::thread::sleep(Duration::from_secs(1));
     r
 }

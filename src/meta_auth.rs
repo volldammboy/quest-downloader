@@ -1002,13 +1002,12 @@ pub fn sign_in() -> Result<String, String> {
         enc(etoken)
     );
     let port = free_port().map_err(|e| e.to_string())?;
-    let profile = std::env::temp_dir().join(format!("qd-meta-signin-{}", std::process::id()));
+    let profile = crate::websess::web_profile();
     std::fs::create_dir_all(&profile).ok();
     // Login en el navegador predeterminado (Chromium, Firefox o Edge).
     let (mut child, callback) = crate::browser::login(&confirm, port, &profile)?;
     let _ = child.kill();
     std::thread::sleep(Duration::from_secs(1));
-    std::fs::remove_dir_all(&profile).ok();
     let qs = callback.split_once('?').map(|(_, q)| q).unwrap_or("");
     let expected = &sha256_hex(challenge.as_bytes())[..16];
     if parse_query(qs, "token") != expected {
