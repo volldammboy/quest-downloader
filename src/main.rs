@@ -265,6 +265,7 @@ impl App {
             return;
         }
         self.syncing = true;
+        crate::meta_auth::note("pedidos", "importando");
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             let r = (|| -> Result<Vec<meta_auth::LibGame>, String> {
@@ -461,8 +462,9 @@ impl App {
                 AsyncMsg::Sync(alias, uid, games) => self.apply_sync(alias, uid, games),
                 AsyncMsg::ImportOrders(r) => match r {
                     Ok(games) => self.apply_import_orders(games),
-                    Err(_) => {
+                    Err(e) => {
                         self.syncing = false;
+                        crate::meta_auth::note("pedidos", &format!("fallo: {}", e.chars().take(160).collect::<String>()));
                     }
                 },
                 AsyncMsg::Plan(id, r) => {
