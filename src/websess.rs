@@ -181,7 +181,7 @@ fn parse_orders(body: &str, out: &mut Vec<(String, String)>) {
 }
 
 /// Recoge respuestas de pedidos durante `secs` segundos.
-fn drain(ws: &mut crate::meta_auth::Ws, idc: &mut u32, secs: u64, out: &mut Vec<(String, String)>) {
+fn drain(ws: &mut crate::meta_auth::Ws, idc: &mut u32, secs: u64, out: &mut Vec<(String, String)>, stat: &mut (u32, u32, u32)) {
     let t0 = Instant::now();
     let mut wanted: Vec<String> = vec![];
     while t0.elapsed() < Duration::from_secs(secs) {
@@ -202,10 +202,12 @@ fn drain(ws: &mut crate::meta_auth::Ws, idc: &mut u32, secs: u64, out: &mut Vec<
             let rid = params.get("requestId").and_then(|x| x.as_str()).unwrap_or("");
             if (url.contains("/a/fl") || url.contains("api/graphql")) && !url.contains("rsrc.php") {
                 wanted.push(rid.to_string());
+                stat.0 += 1;
             }
         } else if method == "Network.loadingFinished" {
             let rid = params.get("requestId").and_then(|x| x.as_str()).unwrap_or("");
             if wanted.contains(&rid.to_string()) {
+                stat.1 += 1;
                 *idc += 1;
                 let gid = *idc;
                 let _ = ws.send_text(&format!(
@@ -219,6 +221,7 @@ fn drain(ws: &mut crate::meta_auth::Ws, idc: &mut u32, secs: u64, out: &mut Vec<
                 .and_then(|x| x.as_str())
             {
                 if body.len() > 500 {
+                    stat.2 += 1;
                     // Muestra para afinar el filtro de DLCs (una vez por arranque).
                     let sample = crate::store::app_dir().join("pedidos-sample.json");
                     if !sample.exists() && body.contains("app_store_item") {
@@ -244,6 +247,7 @@ pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String)>, Stri
     let (mut ws, here) = page_ws(port, Instant::now() + Duration::from_secs(60))?;
     let mut idc = 100u32;
     cdp_call(&mut ws, 10, "Network.enable", "{}")?;
+    crate::meta_auth::note("pedidos", &format!("pestaña {here}"));
     // No recargues si ya estás en pedidos: pisarías el formulario del código.
     if !here.contains("meta.com/my/orders") {
         let nav = serde_json::json!({"url": ORDERS_URL}).to_string();
@@ -265,9 +269,10 @@ pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String)>, Stri
         show_pid(pid, true);
     }
     let mut out: Vec<(String, String)> = vec![];
-    // La primera página ya voló durante la espera: recarga y captúrala.
-    let _ = cdp_call(&mut ws, 50, "Page.reload", "{}");
-    drain(&mut ws, &mut idc, 8, &mut out);
+    let mut stat = (0u32, 0u32, 0u32);
+    // La primera página ya voló durante la espera: recarga sin caché y captúrala.
+    let _ = cdp_call(&mut ws, 50, "Page.reload", r#"{"ignoreCache":true}"#);
+    drain(&mut ws, &mut idc, 8, &mut out, &mut stat);
     let mut quiet = 0u32;
     let mut restored = false;
     for i in 0..150 {
@@ -284,22 +289,27 @@ pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String)>, Stri
             );
             std::thread::sleep(Duration::from_millis(700));
         }
-        drain(&mut ws, &mut idc, 4, &mut out);
+        drain(&mut ws, &mut idc, 4, &mut out, &mut stat);
         if out.len() == before {
             quiet += 1;
         } else {
             quiet = 0;
         }
         // Minimizada la paginación puede no disparar: restaura y sigue visible.
-        if hidden && !restored && out.is_empty() && i >= 3 {
+        if hidden && !restored && quiet >= 3 {
             restored = true;
             show_pid(pid, false);
+            quiet = 0;
             crate::meta_auth::note("pedidos", "ventana restaurada, sigue visible");
         }
         if quiet >= 5 {
             break;
         }
     }
+    crate::meta_auth::note(
+        "pedidos",
+        &format!("resumen req={} fin={} cuerpos={} juegos={}", stat.0, stat.1, stat.2, out.len()),
+    );
     Ok(out)
 }
 
