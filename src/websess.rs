@@ -229,7 +229,16 @@ fn fetch_pages(
         o.insert("first".into(), serde_json::json!(20));
     }
     let mut cursor: Option<String> = None;
+    let mut seen_c = std::collections::HashSet::new();
+    if let Some(o) = vars.as_object_mut() {
+        let keys: Vec<String> = o.keys().cloned().collect();
+        crate::meta_auth::note("pedidos", &format!("fetch vars: {}", keys.join(",")));
+    }
     for page in 0..60 {
+        if !seen_c.insert(cursor.clone()) {
+            crate::meta_auth::note("pedidos", &format!("fetch pág {page}: cursor repetido"));
+            break;
+        }
         if let Some(o) = vars.as_object_mut() {
             o.insert(
                 "cursor".into(),
@@ -287,8 +296,8 @@ fn fetch_pages(
                 .and_then(|x| x.as_str())
                 .map(|s| s.to_string());
         }
-        if out.len() == before && page > 0 {
-            break;
+        if out.len() == before {
+            crate::meta_auth::note("pedidos", &format!("fetch pág {page}: sin novedades"));
         }
         match next {
             Some(c) => cursor = Some(c),
