@@ -485,11 +485,9 @@ pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String, String
     // Sin caché: si no, las respuestas vienen 304/vacías y no hay cuerpos.
     let _ = cdp_call(&mut ws, 12, "Network.setCacheDisabled", r#"{"cacheDisabled":true}"#);
     crate::meta_auth::note("pedidos", &format!("pestaña {here}"));
-    // No recargues si ya estás en pedidos: pisarías el formulario del código.
-    if !here.contains("meta.com/my/orders") {
-        let nav = serde_json::json!({"url": ORDERS_URL}).to_string();
-        cdp_call(&mut ws, 11, "Page.navigate", &nav)?;
-    }
+    // Siempre carga fresca: la pestaña restaurada enseña caché sin red.
+    let nav = serde_json::json!({"url": ORDERS_URL}).to_string();
+    cdp_call(&mut ws, 11, "Page.navigate", &nav)?;
     loop {
         if Instant::now() > deadline {
             return Err("sin login en pedidos".into());
@@ -506,9 +504,8 @@ pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String, String
     }
     let mut out: Vec<(String, String, String)> = vec![];
     let mut stat = (0u32, 0u32, 0u32);
-    // La primera página ya voló durante la espera: recarga sin caché y captúrala.
-    let _ = cdp_call(&mut ws, 50, "Page.reload", r#"{"ignoreCache":true}"#);
-    drain(&mut ws, &mut idc, 8, &mut out, &mut stat);
+    // La carga fresca ya trae la primera página: recógela.
+    drain(&mut ws, &mut idc, 10, &mut out, &mut stat);
     let mut quiet = 0u32;
     for _ in 0..150 {
         if Instant::now() > deadline {
