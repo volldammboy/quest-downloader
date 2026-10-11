@@ -126,16 +126,26 @@ fn eval(ws: &mut crate::meta_auth::Ws, id: &mut u32, expr: &str) -> String {
 fn eval_async(ws: &mut crate::meta_auth::Ws, id: &mut u32, expr: &str) -> String {
     *id += 1;
     let params = serde_json::json!({"expression": expr, "awaitPromise": true, "returnByValue": true}).to_string();
-    cdp_call(ws, *id, "Runtime.evaluate", &params)
-        .ok()
-        .and_then(|v| {
+    match cdp_call(ws, *id, "Runtime.evaluate", &params) {
+        Ok(v) => {
+            if let Some(ex) = v.get("result").and_then(|x| x.get("exceptionDetails")) {
+                let t = ex.get("text").and_then(|x| x.as_str()).unwrap_or("?");
+                let line = ex.get("lineNumber").and_then(|x| x.as_u64()).unwrap_or(0);
+                let col = ex.get("columnNumber").and_then(|x| x.as_u64()).unwrap_or(0);
+                crate::meta_auth::note("pedidos", &format!("JS exc {t} @{line}:{col}"));
+            }
             v.get("result")
                 .and_then(|x| x.get("result"))
                 .and_then(|x| x.get("value"))
                 .and_then(|x| x.as_str())
                 .map(|s| s.to_string())
-        })
-        .unwrap_or_default()
+                .unwrap_or_default()
+        }
+        Err(e) => {
+            crate::meta_auth::note("pedidos", &format!("JS eval err: {e}"));
+            String::new()
+        }
+    }
 }
 
 fn pct_decode(s: &str) -> String {
