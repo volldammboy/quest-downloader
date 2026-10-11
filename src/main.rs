@@ -481,8 +481,14 @@ impl App {
                 }
                 AsyncMsg::ImportOrders(r) => match r {
                     Ok(games) => {
-                        self.status.clear();
-                        self.apply_import_orders(games)
+                        if games.is_empty() {
+                            self.syncing = false;
+                            self.status = tr(&lang, "Sin juegos capturados");
+                            crate::meta_auth::note("pedidos", "captura vacía al importar");
+                        } else {
+                            self.status.clear();
+                            self.apply_import_orders(games)
+                        }
                     }
                     Err(e) => {
                         self.syncing = false;
@@ -841,6 +847,7 @@ fn tr(lang: &str, es: &str) -> String {
         "Sincronizando biblioteca…" => "Syncing library…",
         "Importando pedidos… sigue en la ventana" => "Importing orders… stay in the window",
         "Error 500, pulsa aquí para bypass" => "Error 500, click here to bypass",
+        "Sin juegos capturados" => "No games captured",
         "Juegos importados:" => "Games imported:",
         "Error al vincular" => "Link error",
         "Error importando" => "Import error",
@@ -1256,6 +1263,22 @@ impl eframe::App for App {
                     if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                         self.page = Page::Store;
                         self.do_search();
+                    }
+                    if self.bypass_500 {
+                        let on = (ui.ctx().input(|i| i.time) * 2.0) as u64 % 2 == 0;
+                        let label = egui::RichText::new(tr(&lang, "Error 500, pulsa aquí para bypass"))
+                            .strong()
+                            .color(egui::Color32::WHITE);
+                        let btn = egui::Button::new(label).fill(if on {
+                            egui::Color32::RED
+                        } else {
+                            egui::Color32::DARK_RED
+                        });
+                        if ui.add(btn).clicked() {
+                            self.bypass_500 = false;
+                            self.do_import_orders();
+                        }
+                        ui.ctx().request_repaint();
                     }
                 });
             });
@@ -1685,22 +1708,6 @@ impl App {
             );
             if ui.button(tr(&lang, "Actualizar Biblioteca")).clicked() {
                 self.do_sync();
-            }
-            if self.bypass_500 {
-                let on = (ui.ctx().input(|i| i.time) * 2.0) as u64 % 2 == 0;
-                let label = egui::RichText::new(tr(&lang, "Error 500, pulsa aquí para bypass"))
-                    .strong()
-                    .color(egui::Color32::WHITE);
-                let btn = egui::Button::new(label).fill(if on {
-                    egui::Color32::RED
-                } else {
-                    egui::Color32::DARK_RED
-                });
-                if ui.add(btn).clicked() {
-                    self.bypass_500 = false;
-                    self.do_import_orders();
-                }
-                ui.ctx().request_repaint();
             }
             let imp_btn = ui.button(tr(&lang, "Importar pedidos"));
             if imp_btn.clicked() {

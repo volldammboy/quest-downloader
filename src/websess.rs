@@ -104,9 +104,8 @@ fn eval(ws: &mut crate::meta_auth::Ws, id: &mut u32, expr: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Minimiza la ventana principal del navegador (tras el login): la captura
-/// sigue en segundo plano y el usuario solo ve llenarse la Biblioteca.
-fn minimize_pid(pid: u32) {
+/// Minimiza (o restaura) la ventana principal del navegador.
+fn show_pid(pid: u32, minimize: bool) {
     struct Ctx {
         pid: u32,
         hwnd: isize,
@@ -131,7 +130,10 @@ fn minimize_pid(pid: u32) {
             LPARAM(&mut ctx as *mut Ctx as isize),
         );
         if ctx.hwnd != 0 {
-            let _ = ShowWindow(HWND(ctx.hwnd as *mut _), SW_MINIMIZE);
+            let _ = ShowWindow(
+                HWND(ctx.hwnd as *mut _),
+                if minimize { SW_MINIMIZE } else { SW_RESTORE },
+            );
         }
     }
 }
@@ -172,6 +174,56 @@ fn parse_orders(body: &str, out: &mut Vec<(String, String)>) {
     }
 }
 
+/// Recoge respuestas de pedidos durante `secs` segundos.
+fn drain(ws: &mut crate::meta_auth::Ws, idc: &mut u32, secs: u64, out: &mut Vec<(String, String)>) {
+    let t0 = Instant::now();
+    let mut wanted: Vec<String> = vec![];
+    while t0.elapsed() < Duration::from_secs(secs) {
+        let text = match ws.recv_text() {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        let v: serde_json::Value =
+            serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+        let method = v.get("method").and_then(|x| x.as_str()).unwrap_or("");
+        let params = v.get("params").cloned().unwrap_or(serde_json::Value::Null);
+        if method == "Network.requestWillBeSent" {
+            let url = params
+                .get("request")
+                .and_then(|r| r.get("url"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("");
+            let rid = params.get("requestId").and_then(|x| x.as_str()).unwrap_or("");
+            if (url.contains("/a/fl") || url.contains("api/graphql")) && !url.contains("rsrc.php") {
+                wanted.push(rid.to_string());
+            }
+        } else if method == "Network.loadingFinished" {
+            let rid = params.get("requestId").and_then(|x| x.as_str()).unwrap_or("");
+            if wanted.contains(&rid.to_string()) {
+                *idc += 1;
+                let gid = *idc;
+                let _ = ws.send_text(&format!(
+                    r#"{{"id":{gid},"method":"Network.getResponseBody","params":{{"requestId":"{rid}"}}}}"#
+                ));
+            }
+        } else if v.get("id").is_some() {
+            if let Some(body) = v
+                .get("result")
+                .and_then(|x| x.get("body"))
+                .and_then(|x| x.as_str())
+            {
+                if body.len() > 500 {
+                    let before = out.len();
+                    parse_orders(body, out);
+                    if out.len() != before {
+                        crate::meta_auth::note("pedidos", &format!("{} juegos", out.len()));
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Espera login en pedidos, minimiza la ventana, autoscroll y captura (id, nombre).
 pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String)>, String> {
     let deadline = Instant::now() + Duration::from_secs(900);
@@ -191,64 +243,33 @@ pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String)>, Stri
         std::thread::sleep(Duration::from_secs(3));
     }
     crate::meta_auth::note("pedidos", "lista visible, capturando");
-    if pid != 0 {
-        minimize_pid(pid);
+    let hidden = pid != 0;
+    if hidden {
+        show_pid(pid, true);
     }
     let mut out: Vec<(String, String)> = vec![];
+    // La primera página ya voló durante la espera: recarga y captúrala.
+    let _ = cdp_call(&mut ws, 50, "Page.reload", "{}");
+    drain(&mut ws, &mut idc, 8, &mut out);
     let mut quiet = 0u32;
-    for _ in 0..150 {
+    let mut restored = false;
+    for i in 0..150 {
         if Instant::now() > deadline {
             break;
         }
         let before = out.len();
         eval(&mut ws, &mut idc, "window.scrollTo(0, document.body.scrollHeight)");
-        let t0 = Instant::now();
-        let mut wanted: Vec<String> = vec![];
-        while t0.elapsed() < Duration::from_secs(4) {
-            let text = match ws.recv_text() {
-                Ok(t) => t,
-                Err(_) => continue,
-            };
-            let v: serde_json::Value =
-                serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
-            let method = v.get("method").and_then(|x| x.as_str()).unwrap_or("");
-            let params = v.get("params").cloned().unwrap_or(serde_json::Value::Null);
-            if method == "Network.requestWillBeSent" {
-                let url = params
-                    .get("request")
-                    .and_then(|r| r.get("url"))
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("");
-                let rid = params.get("requestId").and_then(|x| x.as_str()).unwrap_or("");
-                if (url.contains("/a/fl") || url.contains("api/graphql")) && !url.contains("rsrc.php") {
-                    wanted.push(rid.to_string());
-                }
-            } else if method == "Network.loadingFinished" {
-                let rid = params.get("requestId").and_then(|x| x.as_str()).unwrap_or("");
-                if wanted.contains(&rid.to_string()) {
-                    idc += 1;
-                    let gid = idc;
-                    let _ = ws.send_text(&format!(
-                        r#"{{"id":{gid},"method":"Network.getResponseBody","params":{{"requestId":"{rid}"}}}}"#
-                    ));
-                }
-            } else if v.get("id").is_some() {
-                if let Some(body) = v
-                    .get("result")
-                    .and_then(|x| x.get("body"))
-                    .and_then(|x| x.as_str())
-                {
-                    if body.len() > 500 {
-                        parse_orders(body, &mut out);
-                    }
-                }
-            }
-        }
+        drain(&mut ws, &mut idc, 4, &mut out);
         if out.len() == before {
             quiet += 1;
         } else {
             quiet = 0;
-            crate::meta_auth::note("pedidos", &format!("{} juegos", out.len()));
+        }
+        // Minimizada la paginación puede no disparar: restaura y sigue visible.
+        if hidden && !restored && out.is_empty() && i >= 3 {
+            restored = true;
+            show_pid(pid, false);
+            crate::meta_auth::note("pedidos", "ventana restaurada, sigue visible");
         }
         if quiet >= 5 {
             break;
