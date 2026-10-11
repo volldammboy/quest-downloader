@@ -257,52 +257,7 @@ pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String)>, Stri
     Ok(out)
 }
 
-pub fn orders_file() -> std::path::PathBuf {
-    crate::store::app_dir().join("orders_link.json")
-}
-
-pub fn save_orders_file(items: &[(String, String)]) {
-    let v: Vec<serde_json::Value> = items
-        .iter()
-        .map(|(id, name)| serde_json::json!({"id": id, "name": name}))
-        .collect();
-    if let Some(p) = orders_file().parent() {
-        std::fs::create_dir_all(p).ok();
-    }
-    std::fs::write(
-        orders_file(),
-        serde_json::to_string(&v).unwrap_or_default(),
-    )
-    .ok();
-}
-
-pub fn load_orders_file() -> Vec<(String, String)> {
-    let raw = std::fs::read(orders_file()).unwrap_or_default();
-    let v: serde_json::Value = serde_json::from_slice(&raw).unwrap_or(serde_json::Value::Null);
-    v.as_array()
-        .cloned()
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|x| {
-            let id = x.get("id")?.as_str()?.to_string();
-            let name = x.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
-            Some((id, name))
-        })
-        .collect()
-}
-
-/// Captura tras el SSO (misma ventana). Best-effort: nunca falla el vinculado.
-pub fn capture_after_sso(port: u16, pid: u32) {
-    match capture_orders(port, pid) {
-        Ok(items) if !items.is_empty() => {
-            save_orders_file(&items);
-            crate::meta_auth::note("pedidos", &format!("guardados {} de vinculado", items.len()));
-        }
-        Ok(_) => crate::meta_auth::note("pedidos", "captura vacía"),
-        Err(e) => crate::meta_auth::note("pedidos", &format!("captura omitida: {e}")),
-    }
-}
-/// Login web interactivo (fallback manual: botón Importar pedidos).
+/// Login web interactivo (bypass manual del error 500).
 pub fn login_interactive() -> Result<Vec<(String, String)>, String> {
     let port = {
         let s = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
