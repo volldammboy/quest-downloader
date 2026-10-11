@@ -55,6 +55,7 @@ struct App {
     searching: bool,
     syncing: bool,
     linking: bool,
+    status: String,
     rx: mpsc::Receiver<AsyncMsg>,
     tx: mpsc::Sender<AsyncMsg>,
     plan_dlg: Option<PlanDlg>,
@@ -91,6 +92,7 @@ impl App {
             searching: false,
             syncing: false,
             linking: false,
+            status: String::new(),
             rx,
             tx,
             plan_dlg: None,
@@ -241,6 +243,7 @@ impl App {
             return;
         }
         self.syncing = true;
+        self.status = tr(&self.lang, "Sincronizando biblioteca…");
         let tx = self.tx.clone();
         let pid = std::process::id();
         crate::meta_auth::note("sync", &format!("hilo pid={pid}"));
@@ -268,6 +271,7 @@ impl App {
             return;
         }
         self.syncing = true;
+        self.status = tr(&self.lang, "Importando pedidos… sigue en la ventana");
         crate::meta_auth::note("pedidos", "importando");
         let tx = self.tx.clone();
         std::thread::spawn(move || {
@@ -377,6 +381,7 @@ impl App {
             }
         }
         self.syncing = false;
+        self.status.clear();
         self.refresh_library();
         self.ensure_covers();
     }
@@ -394,6 +399,7 @@ impl App {
             return;
         }
         self.linking = true;
+        self.status = tr(&self.lang, "Vinculando… completa el navegador");
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             tx.send(AsyncMsg::Linked(meta_auth::sign_in())).ok();
@@ -469,9 +475,13 @@ impl App {
                     self.apply_sync(alias, uid, games)
                 }
                 AsyncMsg::ImportOrders(r) => match r {
-                    Ok(games) => self.apply_import_orders(games),
+                    Ok(games) => {
+                        self.status.clear();
+                        self.apply_import_orders(games)
+                    }
                     Err(e) => {
                         self.syncing = false;
+                        self.status = format!("{}: {}", tr(&lang, "Error importando"), e.chars().take(120).collect::<String>());
                         crate::meta_auth::note("pedidos", &format!("fallo: {}", e.chars().take(160).collect::<String>()));
                     }
                 },
@@ -594,6 +604,11 @@ impl App {
                     }
                     Err(e) => {
                         self.linking = false;
+                        if e.starts_with("DL:") {
+                            self.status.clear();
+                        } else {
+                            self.status = format!("{}: {}", tr(&lang, "Error al vincular"), e.chars().take(120).collect::<String>());
+                        }
                         if let Some(msg) = e.strip_prefix("DL:") {
                             // error de descarga: modal simple
                             self.plan_dlg = None;
@@ -817,6 +832,11 @@ fn tr(lang: &str, es: &str) -> String {
         "Actualizar Biblioteca" => "Refresh library",
         "Importar pedidos" => "Import orders",
         "Importando pedidos…" => "Importing orders…",
+        "Vinculando… completa el navegador" => "Linking… finish in the browser",
+        "Sincronizando biblioteca…" => "Syncing library…",
+        "Importando pedidos… sigue en la ventana" => "Importing orders… stay in the window",
+        "Error al vincular" => "Link error",
+        "Error importando" => "Import error",
         "Importar lista…" => "Import list…",
         "Busca juegos de la Meta Quest Store…" => "Search Meta Quest Store games…",
         "Buscar" => "Search",
@@ -1369,6 +1389,9 @@ impl eframe::App for App {
                     })
                     .collect();
                 if act.is_empty() {
+                    if !self.status.is_empty() {
+                        ui.label(egui::RichText::new(&self.status).strong());
+                    } else {
                     let libs = store::library_all();
                     let n = libs.iter().filter(|g| g.owned).count();
                     ui.label(format!(
@@ -1381,6 +1404,7 @@ impl eframe::App for App {
                         self.ncols,
                         tr(&lang, "col")
                     ));
+                    }
                 } else {
                     let done: u64 = act.iter().map(|j| j.done).sum();
                     let tot: u64 = act.iter().map(|j| j.total).sum();
