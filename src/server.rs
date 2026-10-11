@@ -126,11 +126,23 @@ fn games_json(token: &str) -> String {
     for e in entries {
         let Ok(e) = e else { continue };
         let dir = e.path();
-        if !dir.is_dir() || !dir.join("base.apk").exists() {
+        if !dir.is_dir() {
             continue;
         }
         let folder = dir.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-        let g = lib.iter().find(|g| safe(&g.name) == folder);
+        let g = lib.iter().find(|g| {
+            safe(&g.name) == folder
+                || (!g.package.trim().is_empty() && safe(&g.package) == folder)
+        });
+        // APK oficial (<paquete>.apk) o antiguo base.apk.
+        let apk = if dir.join("base.apk").exists() {
+            "base.apk".to_string()
+        } else {
+            format!("{folder}.apk")
+        };
+        if !dir.join(&apk).exists() {
+            continue;
+        }
         let mut files = String::new();
         let mut ff = true;
         let mut add = |n: &str, sz: u64| {
@@ -147,8 +159,8 @@ fn games_json(token: &str) -> String {
                 token
             ));
         };
-        if let Ok(md) = std::fs::metadata(dir.join("base.apk")) {
-            add("base.apk", md.len());
+        if let Ok(md) = std::fs::metadata(dir.join(&apk)) {
+            add(&apk, md.len());
         }
         // Datos: subcarpeta obb/ (nuevo) o raíz (descargas antiguas).
         let mut obbs: Vec<(String, u64)> = vec![];
@@ -309,7 +321,9 @@ fn handle(req: tiny_http::Request, token: &str) {
             return;
         }
         let p = crate::store::download_dir().join(folder).join(file);
-        let ok_name = file == "base.apk" || file.ends_with(".obb");
+        let ok_name = file == "base.apk"
+            || file.ends_with(".obb")
+            || (!file.contains('/') && file.to_lowercase().ends_with(".apk"));
         if !ok_name {
             let _ = req.respond(tiny_http::Response::empty(403));
             return;

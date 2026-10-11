@@ -592,29 +592,33 @@ impl App {
     }
 
     fn start_download(&mut self, app: &store::Game, extra: Vec<meta_auth::PlanFile>) {
-        let folder = game_folder(&app.name);
-        std::fs::create_dir_all(&folder).ok();
-        // APK en la raíz, datos en obb/ (todos los juegos con datos aparte).
-        std::fs::create_dir_all(folder.join("obb")).ok();
-        oculusdb::save_json(&folder.join(format!("{}.json", app.id)), &to_store_app(app));
         let tx = self.tx.clone();
         let dm = self.dm.clone();
-        let app_id = app.id.clone();
+        let app_c = app.clone();
         std::thread::spawn(move || {
             let r = (|| -> Result<(), String> {
                 let token = meta_auth::profile_token()?;
-                let plan = meta_auth::plan(&token, &app_id)?;
+                let plan = meta_auth::plan(&token, &app_c.id)?;
                 let delivery = meta_auth::delivery_token(&token)?;
+                // Nombres oficiales: carpeta y APK por paquete.
+                let folder = game_folder_for(&app_c.name, &plan.package);
+                let apk = apk_name(&plan.package);
+                std::fs::create_dir_all(&folder).ok();
+                std::fs::create_dir_all(folder.join("obb")).ok();
+                oculusdb::save_json(&folder.join(format!("{}.json", app_c.id)), &to_store_app(&app_c));
                 let mut files = plan.files;
                 files.extend(extra);
                 for f in &files {
-                    let name = std::path::Path::new(&f.name)
+                    let mut name = std::path::Path::new(&f.name)
                         .file_name()
                         .and_then(|s| s.to_str())
                         .unwrap_or("")
                         .to_string();
                     if name.is_empty() || name == "." || name == ".." {
                         continue;
+                    }
+                    if name == "base.apk" {
+                        name = apk.clone();
                     }
                     let url = meta_auth::file_url(f, &delivery)?;
                     let dest = if name.to_lowercase().ends_with(".apk") {
@@ -623,7 +627,7 @@ impl App {
                         folder.join("obb").join(&name)
                     };
                     let jid = dm.add(&dm, format!("{} · {name}", plan.name), url, dest);
-                    tx.send(AsyncMsg::Linked(Ok(format!("JOB:{app_id}:{jid}")))).ok();
+                    tx.send(AsyncMsg::Linked(Ok(format!("JOB:{}:{jid}", app_c.id)))).ok();
                 }
                 Ok(())
             })();
@@ -848,6 +852,48 @@ fn game_folder(name: &str) -> std::path::PathBuf {
     let safe = safe.trim();
     let safe = if safe.is_empty() { "juego" } else { safe };
     store::download_dir().join(safe)
+}
+
+/// Carpeta oficial: paquete si se conoce, si no el nombre.
+fn game_folder_for(name: &str, package: &str) -> std::path::PathBuf {
+    if package.trim().is_empty() {
+        game_folder(name)
+    } else {
+        game_folder(package)
+    }
+}
+
+/// Nombre oficial del APK (paquete + .apk).
+fn apk_name(package: &str) -> String {
+    let p: String = package
+        .chars()
+        .filter(|c| !matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'))
+        .collect();
+    let p = p.trim();
+    if p.is_empty() {
+        "base.apk".into()
+    } else {
+        format!("{p}.apk")
+    }
+}
+
+/// ¿APK ya descargado? (layout nuevo por paquete + antiguo por nombre).
+fn has_apk(g: &store::Game) -> bool {
+    if !g.package.trim().is_empty()
+        && game_folder(&g.package).join(apk_name(&g.package)).exists()
+    {
+        return true;
+    }
+    game_folder(&g.name).join("base.apk").exists()
+}
+
+/// Carpeta con contenido (nueva por paquete o antigua por nombre).
+fn game_dir(g: &store::Game) -> std::path::PathBuf {
+    if !g.package.trim().is_empty() && game_folder(&g.package).exists() {
+        game_folder(&g.package)
+    } else {
+        game_folder(&g.name)
+    }
 }
 
 fn to_store_app(g: &store::Game) -> oculusdb::StoreApp {
@@ -1345,8 +1391,8 @@ impl eframe::App for App {
                             if let Some(g) =
                                 self.library.iter().find(|x| x.id == id).cloned()
                             {
-                                if game_folder(&g.name).join("base.apk").exists() {
-                                    open_folder(&game_folder(&g.name));
+                                if has_apk(&g) {
+                                    open_folder(&game_dir(&g));
                                 } else {
                                     self.open_download_dialog(g);
                                 }
@@ -1997,7 +2043,7 @@ impl App {
                     let is_sel = self.selected.as_ref() == Some(&g.id);
                     let dl_tex = self.dl_tex.clone();
                     let web_tex = self.web_tex.clone();
-                    let has_apk = game_folder(&g.name).join("base.apk").exists();
+                    let apk_done = has_apk(g);
                     let frac = self.card_frac(&g.id);
                     let frame = egui::Frame::new()
                         .fill(card)
@@ -2053,7 +2099,7 @@ impl App {
                             };
                             let st_txt = format!(
                                 "{st}{}",
-                                if has_apk {
+                                if apk_done {
                                     format!(" · {}", tr(&lang, "Descargado"))
                                 } else {
                                     String::new()
