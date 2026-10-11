@@ -310,6 +310,11 @@ impl App {
     fn apply_sync(&mut self, alias: String, uid: String, games: Vec<meta_auth::LibGame>) {
         if uid.starts_with("ERR:") {
             self.syncing = false;
+            // Ante el 500, vía alternativa: pedidos de la sesión web.
+            if uid.contains("500") {
+                crate::meta_auth::note("biblioteca", "500 en sync; probando pedidos");
+                self.do_import_orders();
+            }
             return;
         }
         if !alias.is_empty() {
@@ -374,6 +379,7 @@ impl App {
 
     fn do_unlink(&mut self) {
         meta_auth::forget();
+        crate::websess::forget();
         store::set_setting("meta_name", "");
         self.account.clear();
     }
