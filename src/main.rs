@@ -276,7 +276,7 @@ impl App {
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             let r = (|| -> Result<Vec<meta_auth::LibGame>, String> {
-                crate::websess::fetch_owned_apps().map(|v| {
+                crate::websess::login_interactive().map(|v| {
                     v.into_iter()
                         .map(|(id, name)| meta_auth::LibGame {
                             id,
@@ -388,7 +388,7 @@ impl App {
 
     fn do_unlink(&mut self) {
         meta_auth::forget();
-        crate::websess::forget();
+        std::fs::remove_file(crate::websess::orders_file()).ok();
         store::set_setting("meta_name", "");
         self.account.clear();
     }
@@ -599,6 +599,24 @@ impl App {
                         if !alias.is_empty() {
                             store::set_setting("meta_name", &alias);
                             self.account = alias;
+                        }
+                        // Pedidos capturados durante el vinculado: biblioteca inmediata.
+                        let ord = crate::websess::load_orders_file();
+                        if !ord.is_empty() {
+                            let games: Vec<meta_auth::LibGame> = ord
+                                .into_iter()
+                                .map(|(id, name)| meta_auth::LibGame {
+                                    id,
+                                    name,
+                                    package: String::new(),
+                                    publisher: String::new(),
+                                    genres: String::new(),
+                                })
+                                .collect();
+                            let n = games.len();
+                            self.apply_import_orders(games);
+                            std::fs::remove_file(crate::websess::orders_file()).ok();
+                            self.status = format!("{} {n}", tr(&lang, "Juegos importados:"));
                         }
                         self.do_sync();
                     }
@@ -835,6 +853,7 @@ fn tr(lang: &str, es: &str) -> String {
         "Vinculando… completa el navegador" => "Linking… finish in the browser",
         "Sincronizando biblioteca…" => "Syncing library…",
         "Importando pedidos… sigue en la ventana" => "Importing orders… stay in the window",
+        "Juegos importados:" => "Games imported:",
         "Error al vincular" => "Link error",
         "Error importando" => "Import error",
         "Importar lista…" => "Import list…",
