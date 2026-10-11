@@ -5,6 +5,7 @@
 mod browser;
 mod downloader;
 mod server;
+mod websess;
 mod meta_auth;
 mod oculusdb;
 mod store;
@@ -39,6 +40,7 @@ enum AsyncMsg {
     Plan(String, Result<meta_auth::Plan, String>),
     Cover(String, Vec<u8>),
     Linked(Result<String, String>),
+    ImportOrders(Result<Vec<meta_auth::LibGame>, String>),
 }
 
 struct App {
@@ -258,6 +260,53 @@ impl App {
         });
     }
 
+    fn do_import_orders(&mut self) {
+        if self.syncing {
+            return;
+        }
+        self.syncing = true;
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let r = (|| -> Result<Vec<meta_auth::LibGame>, String> {
+                crate::websess::fetch_owned_apps().map(|v| {
+                    v.into_iter()
+                        .map(|(id, name)| meta_auth::LibGame {
+                            id,
+                            name,
+                            package: String::new(),
+                            publisher: String::new(),
+                            genres: String::new(),
+                        })
+                        .collect()
+                })
+            })();
+            tx.send(AsyncMsg::ImportOrders(r)).ok();
+        });
+    }
+
+    fn apply_import_orders(&mut self, games: Vec<meta_auth::LibGame>) {
+        // Alta sin borrar: no toca lo que ya hay (el sync con 500 no vacía nada).
+        for g in &games {
+            let game = store::Game {
+                id: g.id.clone(),
+                name: if g.name.is_empty() { "?".into() } else { g.name.clone() },
+                package: g.package.clone(),
+                price: String::new(),
+                size: String::new(),
+                publisher: g.publisher.clone(),
+                store_url: format!("https://www.meta.com/experiences/p/{}", g.id),
+                owned: true,
+                verified_at: 0,
+                art_url: String::new(),
+                info: serde_json::json!({ "genres": g.genres }),
+            };
+            store::library_add(&game);
+        }
+        self.syncing = false;
+        self.refresh_library();
+        self.ensure_covers();
+    }
+
     fn apply_sync(&mut self, alias: String, uid: String, games: Vec<meta_auth::LibGame>) {
         if uid.starts_with("ERR:") {
             self.syncing = false;
@@ -404,10 +453,28 @@ impl App {
                     self.searching = false;
                 }
                 AsyncMsg::Sync(alias, uid, games) => self.apply_sync(alias, uid, games),
+                AsyncMsg::ImportOrders(r) => match r {
+                    Ok(games) => self.apply_import_orders(games),
+                    Err(_) => {
+                        self.syncing = false;
+                    }
+                },
                 AsyncMsg::Plan(id, r) => {
                     self.plan_pending = false;
                     match r {
                         Ok(p) => {
+                            // Rellena el paquete en biblioteca si falta (importados de pedidos).
+                            if !p.package.is_empty() {
+                                if let Some(pa) = self.plan_app.clone() {
+                                    if let Some(mut row) = store::library_all().into_iter().find(|x| x.id == pa.id) {
+                                        if row.package.is_empty() {
+                                            row.package = p.package.clone();
+                                            store::library_add(&row);
+                                            self.refresh_library();
+                                        }
+                                    }
+                                }
+                            }
                             // Base única: requeridos + opcionales no-idioma.
                             // Cada idioma: un paquete global (textos + audio).
                             // Se omiten los archivos de idioma ya incluidos en la base.
@@ -732,6 +799,8 @@ fn tr(lang: &str, es: &str) -> String {
         "F5 actualizar · Supr eliminar · F1 ayuda" => "F5 refresh · Del delete · F1 help",
         "Buscar en la biblioteca…" => "Search library…",
         "Actualizar Biblioteca" => "Refresh library",
+        "Importar pedidos" => "Import orders",
+        "Importando pedidos…" => "Importing orders…",
         "Importar lista…" => "Import list…",
         "Busca juegos de la Meta Quest Store…" => "Search Meta Quest Store games…",
         "Buscar" => "Search",
@@ -1570,6 +1639,10 @@ impl App {
             if ui.button(tr(&lang, "Actualizar Biblioteca")).clicked() {
                 self.do_sync();
             }
+            let imp_btn = ui.button(tr(&lang, "Importar pedidos"));
+            if imp_btn.clicked() {
+                self.do_import_orders();
+            }
             if ui.button(tr(&lang, "Importar lista…")).clicked() {
                 self.import_open = true;
             }
@@ -1964,6 +2037,224 @@ fn main() -> eframe::Result<()> {
         let s = crate::server::toggle();
         println!("PROBE srv running={} {}:{} token={} err={}", s.running, s.ip, crate::server::PORT, s.token, s.error);
         std::thread::sleep(std::time::Duration::from_secs(90));
+        return Ok(());
+    }
+    if std::env::args().any(|a| a == "--probe-page") {
+        let out = (|| -> Result<serde_json::Value, String> {
+            let token = crate::meta_auth::profile_token()?;
+            crate::meta_auth::query(&token, "4850747515044496", r#"{"first":5}"#, "pagina")
+        })();
+        match out {
+            Ok(v) => {
+                let d = v.get("data").cloned().unwrap_or(serde_json::Value::Null);
+                let viewer = d.get("viewer").cloned().unwrap_or(serde_json::Value::Null);
+                let ae = viewer.get("active_entitlements").cloned().unwrap_or(serde_json::Value::Null);
+                let keys: Vec<String> = ae.as_object().map(|o| o.keys().cloned().collect()).unwrap_or_default();
+                println!("PROBE page keys={keys:?}");
+                if let Some(pi) = ae.get("pageInfo") {
+                    println!("PROBE pageInfo={pi}");
+                }
+                let n = ae.get("nodes").and_then(|x| x.as_array()).map(|a| a.len()).unwrap_or(0);
+                let e = ae.get("edges").and_then(|x| x.as_array()).map(|a| a.len()).unwrap_or(0);
+                println!("PROBE nodes={n} edges={e}");
+            }
+            Err(e) => println!("PROBE page ERR {e}"),
+        }
+        return Ok(());
+    }
+    if std::env::args().any(|a| a == "--probe-orders") {
+        // Abre Chromium temporal y captura su tráfico 5 min.
+        // El usuario se loguea a mano y abre la página de pedidos.
+        let port = {
+            let s = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            s.local_addr().unwrap().port()
+        };
+        let profile = std::env::temp_dir().join(format!("qd-probe-{}", std::process::id()));
+        std::fs::create_dir_all(&profile).ok();
+        let exe = crate::meta_auth::edge_path().unwrap();
+        let mut child = crate::browser::launch_chromium(&exe, port, &profile, "https://www.meta.com/my/orders/?order_type=digital_products&timeFilter=ALL_TIME").unwrap();
+        println!("PROBE orders: loguéate en la ventana y abre tus pedidos. Capturando 5 min…");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
+        let http = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(3))
+            .build()
+            .unwrap();
+        let mut ws_url = String::new();
+        while ws_url.is_empty() && std::time::Instant::now() < deadline {
+            if let Ok(r) = http.get(format!("http://127.0.0.1:{port}/json/list")).send() {
+                if let Ok(tabs) = r.json::<serde_json::Value>() {
+                    if let Some(arr) = tabs.as_array() {
+                        for t in arr {
+                            if t.get("type").and_then(|x| x.as_str()) == Some("page") {
+                                if let Some(u) = t.get("webSocketDebuggerUrl").and_then(|x| x.as_str()) {
+                                    // ws://host:port/devtools/page/XYZ → path
+                                    if let Some(p) = u.split(&format!(":{port}")).nth(1) {
+                                        ws_url = p.to_string();
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        if ws_url.is_empty() {
+            println!("PROBE orders sin pestaña");
+        } else if let Ok(mut ws) = crate::meta_auth::Ws::connect("127.0.0.1", port, &ws_url) {
+            ws.stream.set_read_timeout(Some(std::time::Duration::from_secs(1))).ok();
+            ws.send_text(r#"{"id":1,"method":"Network.enable","params":{}}"#).ok();
+            let mut seen = std::collections::HashSet::new();
+            loop {
+                if std::time::Instant::now() > deadline || seen.len() >= 40 {
+                    break;
+                }
+                let t = match ws.recv_text() {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                };
+                let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) else { continue };
+                if v.get("method").and_then(|x| x.as_str()) != Some("Network.requestWillBeSent") {
+                    continue;
+                }
+                let req = v.get("params").and_then(|p| p.get("request")).cloned().unwrap_or(serde_json::Value::Null);
+                let url = req.get("url").and_then(|x| x.as_str()).unwrap_or("");
+                if !(url.contains("meta.com") || url.contains("oculus.com") || url.contains("facebook.com")) {
+                    continue;
+                }
+                if url.ends_with(".js") || url.ends_with(".css") || url.contains("rsrc.php") || url.contains("/ajax/bz") {
+                    continue;
+                }
+                if !seen.insert(url.to_string()) {
+                    continue;
+                }
+                let method = req.get("method").and_then(|x| x.as_str()).unwrap_or("");
+                let post = req.get("postData").and_then(|x| x.as_str()).unwrap_or("");
+                let post: String = post.chars().take(400).collect();
+                println!("PROBE net {method} {}", &url[..url.len().min(220)]);
+                if !post.is_empty() {
+                    println!("PROBE post {post}");
+                }
+                if seen.len() >= 40 {
+                    break;
+                }
+            }
+        }
+        let _ = child.kill();
+        std::fs::remove_dir_all(&profile).ok();
+        println!("PROBE orders fin");
+        return Ok(());
+    }
+    if std::env::args().any(|a| a == "--probe-orders2") {
+        // Como probe-orders pero guarda también los cuerpos de respuesta (local).
+        let port = {
+            let s = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            s.local_addr().unwrap().port()
+        };
+        let profile = std::env::temp_dir().join(format!("qd-probe2-{}", std::process::id()));
+        std::fs::create_dir_all(&profile).ok();
+        let exe = crate::meta_auth::edge_path().unwrap();
+        let mut child = crate::browser::launch_chromium(&exe, port, &profile, "https://www.meta.com/my/orders/?order_type=digital_products&timeFilter=ALL_TIME").unwrap();
+        println!("PROBE orders2: loguéate, abre pedidos, espera 5 min…");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
+        let http = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(3))
+            .build()
+            .unwrap();
+        let mut ws_url = String::new();
+        let mut ws_title = String::new();
+        while ws_url.is_empty() && std::time::Instant::now() < deadline {
+            if let Ok(r) = http.get(format!("http://127.0.0.1:{port}/json/list")).send() {
+                if let Ok(tabs) = r.json::<serde_json::Value>() {
+                    if let Some(arr) = tabs.as_array() {
+                        let mut best: Option<&serde_json::Value> = None;
+                        for t in arr {
+                            if t.get("type").and_then(|x| x.as_str()) != Some("page") {
+                                continue;
+                            }
+                            let u = t.get("url").and_then(|x| x.as_str()).unwrap_or("");
+                            if u.contains("orders") || u.contains("meta.com/my") || u.contains("oculus.com") {
+                                best = Some(t);
+                                break;
+                            }
+                            best = Some(t);
+                        }
+                        if let Some(t) = best {
+                            ws_title = t.get("url").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                            if let Some(u) = t.get("webSocketDebuggerUrl").and_then(|x| x.as_str()) {
+                                if let Some(p) = u.split(&format!(":{port}")).nth(1) {
+                                    ws_url = p.to_string();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        println!("PROBE pestaña: {ws_title}");
+        let outdir = std::env::temp_dir().join(format!("qd-orders-{}", std::process::id()));
+        std::fs::create_dir_all(&outdir).ok();
+        println!("PROBE guardando en {}", outdir.display());
+        if let Ok(mut ws) = crate::meta_auth::Ws::connect("127.0.0.1", port, &ws_url) {
+            ws.stream.set_read_timeout(Some(std::time::Duration::from_secs(1))).ok();
+            ws.send_text(r#"{"id":1,"method":"Network.enable","params":{}}"#).ok();
+            let mut id2url: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+            let mut get_id = 1000u32;
+            let mut saved = 0u32;
+            loop {
+                if std::time::Instant::now() > deadline || saved >= 30 {
+                    break;
+                }
+                let t = match ws.recv_text() {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                };
+                let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) else { continue };
+                let method = v.get("method").and_then(|x| x.as_str()).unwrap_or("");
+                let params = v.get("params").cloned().unwrap_or(serde_json::Value::Null);
+                if method == "Network.requestWillBeSent" {
+                    let rid = params.get("requestId").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let url = params.get("request").and_then(|r| r.get("url")).and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    if (url.contains("meta.com/a/fl") || url.contains("meta.com/api/graphql") || url.contains("oculus.com")) && !url.contains("rsrc.php") {
+                        id2url.insert(rid.clone(), url.clone());
+                        // Para la consulta de pedidos: guarda el cuerpo de la petición.
+                        if url.contains("DollyAccountOrderHistory") || url.contains("api/graphql") {
+                            let post = params.get("request").and_then(|r| r.get("postData")).and_then(|x| x.as_str()).unwrap_or("");
+                            let post: String = post.chars().take(6000).collect();
+                            if !post.is_empty() {
+                                let n = saved + 1000;
+                                let path = outdir.join(format!("req-{n}.txt"));
+                                std::fs::write(&path, format!("{url}\n\n{post}")).ok();
+                                println!("PROBE petición {} ({} bytes)", path.display(), post.len());
+                            }
+                        }
+                    }
+                } else if method == "Network.loadingFinished" {
+                    let rid = params.get("requestId").and_then(|x| x.as_str()).unwrap_or("");
+                    if let Some(url) = id2url.remove(rid) {
+                        get_id += 1;
+                        let gid = get_id;
+                        ws.send_text(&format!(r#"{{"id":{gid},"method":"Network.getResponseBody","params":{{"requestId":"{rid}"}}}}"#)).ok();
+                        let _ = url;
+                    }
+                } else if v.get("id").is_some() {
+                    // Respuesta a getResponseBody (u otros).
+                    if let Some(res) = v.get("result") {
+                        if let Some(body) = res.get("body").and_then(|x| x.as_str()) {
+                            saved += 1;
+                            let path = outdir.join(format!("resp-{saved}.txt"));
+                            std::fs::write(&path, body).ok();
+                            println!("PROBE guardada {} ({} bytes)", path.display(), body.len());
+                        }
+                    }
+                }
+            }
+        }
+        let _ = child.kill();
+        std::fs::remove_dir_all(&profile).ok();
+        println!("PROBE orders2 fin");
         return Ok(());
     }
     if std::env::args().any(|a| a == "--probe-sync") {

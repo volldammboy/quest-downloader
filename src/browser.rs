@@ -151,7 +151,7 @@ pub fn detect() -> DefaultBrowser {
     DefaultBrowser::Other
 }
 
-fn launch_chromium(
+pub(crate) fn launch_chromium(
     exe: &str,
     port: u16,
     profile: &std::path::Path,

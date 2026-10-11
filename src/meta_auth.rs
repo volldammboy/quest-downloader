@@ -122,7 +122,7 @@ fn m(lang: &str, es: &str, en: &str) -> String {
     if lang == "en" { en.into() } else { es.into() }
 }
 
-fn dpapi(data: &[u8], protect: bool) -> Result<Vec<u8>, String> {
+pub(crate) fn dpapi(data: &[u8], protect: bool) -> Result<Vec<u8>, String> {
     use windows::Win32::Foundation::{HLOCAL, LocalFree};
     use windows::Win32::Security::Cryptography::{
         CRYPT_INTEGER_BLOB, CryptProtectData, CryptUnprotectData,
