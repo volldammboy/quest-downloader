@@ -234,8 +234,9 @@ fn fetch_pages(
             .collect::<Vec<_>>()
             .join("&");
         let js_body = serde_json::to_string(&body).unwrap_or_default();
+        // Worker con fetch virgen: el fetch de la página lo intercepta Meta.
         let expr = format!(
-            "(async () => {{ try {{ const r = await fetch('https://www.meta.com/api/graphql/', {{method:'POST', headers:{{'Content-Type':'application/x-www-form-urlencoded'}}, credentials:'include', body: {js_body}}}); const t = await r.text(); return ('HTTP'+r.status+' ').slice(0,12)+t.slice(0, 2000000); }} catch(e) {{ return 'JSERR:'+e; }} }})()"
+            "(async () => {{ try {{ const code = \"onmessage=async e=>{{try{{const r=await fetch(e.data.u,{{method:'POST',headers:{{'Content-Type':'application/x-www-form-urlencoded'}},credentials:'include',body:e.data.b}});postMessage('HTTP'+r.status+' '+(await r.text()))}}catch(x){{postMessage('JSERR:'+x)}}}}\"; const w = new Worker(URL.createObjectURL(new Blob([code],{{type:'text/javascript'}})))); const t = await new Promise((res, rej)=>{{w.onmessage=m=>res(m.data);w.onerror=x=>rej(x);w.postMessage({{u:'https://www.meta.com/api/graphql/',b:{js_body}}});}}); w.terminate(); return String(t).slice(0, 2000000); }} catch(e) {{ return 'JSERR:'+e; }} }})()"
         );
         let text = eval_async(ws, idc, &expr);
         if text.is_empty() {
