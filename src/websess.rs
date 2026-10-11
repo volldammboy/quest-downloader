@@ -247,6 +247,8 @@ pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String)>, Stri
     let (mut ws, here) = page_ws(port, Instant::now() + Duration::from_secs(60))?;
     let mut idc = 100u32;
     cdp_call(&mut ws, 10, "Network.enable", "{}")?;
+    // Sin caché: si no, las respuestas vienen 304/vacías y no hay cuerpos.
+    let _ = cdp_call(&mut ws, 12, "Network.setCacheDisabled", r#"{"cacheDisabled":true}"#);
     crate::meta_auth::note("pedidos", &format!("pestaña {here}"));
     // No recargues si ya estás en pedidos: pisarías el formulario del código.
     if !here.contains("meta.com/my/orders") {
@@ -300,6 +302,9 @@ pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String)>, Stri
             restored = true;
             show_pid(pid, false);
             quiet = 0;
+            // Vuelve arriba: re-dispara la paginación desde cero.
+            eval(&mut ws, &mut idc, "window.scrollTo(0, 0)");
+            std::thread::sleep(Duration::from_secs(1));
             crate::meta_auth::note("pedidos", "ventana restaurada, sigue visible");
         }
         if quiet >= 5 {
