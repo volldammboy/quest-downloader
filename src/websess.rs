@@ -128,37 +128,40 @@ fn page_ws(port: u16, deadline: Instant) -> Result<(crate::meta_auth::Ws, String
                 if let Some(arr) = tabs.as_array() {
                     let mut best: Option<String> = None;
                     let mut best_url = String::new();
+                    let mut fallback: Option<String> = None;
+                    let mut fallback_url = String::new();
                     for t in arr {
                         if t.get("type").and_then(|x| x.as_str()) != Some("page") {
                             continue;
                         }
                         let u = t.get("url").and_then(|x| x.as_str()).unwrap_or("");
-                        let w = t
-                            .get("webSocketDebuggerUrl")
-                            .and_then(|x| x.as_str())
-                            .unwrap_or("");
-                        if w.is_empty() {
+                        let w = t.get("webSocketDebuggerUrl").and_then(|x| x.as_str()).unwrap_or("");
+                        if w.is_empty() || !(u.starts_with("https://") || u.starts_with("http://")) {
                             continue;
                         }
-                        if u.contains("orders") || u.contains("meta.com/my") || u.contains("oculus.com") {
+                        if u.contains("meta.com/my/orders") {
                             best = Some(w.into());
                             best_url = u.into();
                             break;
                         }
-                        if best.is_none() {
-                            best = Some(w.into());
-                            best_url = u.into();
+                        if fallback.is_none() && (u.contains("meta.com") || u.contains("oculus.com")) {
+                            fallback = Some(w.into());
+                            fallback_url = u.into();
                         }
                     }
-                    if let Some(w) = best {
-                        if let Some(p) = w.split(&format!(":{port}")).nth(1) {
-                            let mut ws =
-                                crate::meta_auth::Ws::connect("127.0.0.1", port, p)?;
-                            ws.stream
-                                .set_read_timeout(Some(Duration::from_secs(5)))
-                                .map_err(|e| e.to_string())?;
-                            return Ok((ws, best_url));
-                        }
+                    let (w, url) = match (best, fallback) {
+                        (Some(w), _) => (w, best_url),
+                        (None, Some(w)) => (w, fallback_url),
+                        _ => continue,
+                    };
+                    let _ = url;
+                    if let Some(p) = w.split(&format!(":{port}")).nth(1) {
+                        let mut ws =
+                            crate::meta_auth::Ws::connect("127.0.0.1", port, p)?;
+                        ws.stream
+                            .set_read_timeout(Some(Duration::from_secs(5)))
+                            .map_err(|e| e.to_string())?;
+                        return Ok((ws, best_url));
                     }
                 }
             }
