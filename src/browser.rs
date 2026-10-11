@@ -10,6 +10,52 @@ use std::time::{Duration, Instant};
 
 use crate::meta_auth::{wait_callback, Ws};
 
+/// Centra la ventana principal del pid (1100x750): el login no queda
+/// escondido en un borde. Best-effort con reintentos.
+pub(crate) fn center_window(pid: u32) {
+    use windows::Win32::Foundation::*;
+    use windows::Win32::UI::WindowsAndMessaging::*;
+    struct Ctx {
+        pid: u32,
+        hwnd: isize,
+    }
+    unsafe extern "system" fn cb(hwnd: HWND, lp: LPARAM) -> BOOL {
+        let ctx = &mut *(lp.0 as *mut Ctx);
+        let mut wpid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut wpid));
+        let no_owner = GetWindow(hwnd, GW_OWNER)
+            .map(|h| h == HWND(std::ptr::null_mut()))
+            .unwrap_or(true);
+        if wpid == ctx.pid && IsWindowVisible(hwnd).as_bool() && no_owner {
+            ctx.hwnd = hwnd.0 as isize;
+            return BOOL(0);
+        }
+        BOOL(1)
+    }
+    let t0 = Instant::now();
+    while t0.elapsed() < Duration::from_secs(8) {
+        let mut ctx = Ctx { pid, hwnd: 0 };
+        unsafe {
+            let _ = EnumWindows(Some(cb), LPARAM(&mut ctx as *mut Ctx as isize));
+            if ctx.hwnd != 0 {
+                let (cx, cy) = (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
+                let (w, h) = (1100, 750);
+                let _ = SetWindowPos(
+                    HWND(ctx.hwnd as *mut _),
+                    HWND(std::ptr::null_mut()),
+                    ((cx - w) / 2).max(0),
+                    ((cy - h) / 2).max(0),
+                    w,
+                    h,
+                    SWP_NOZORDER | SWP_NOACTIVATE,
+                );
+                return;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
 pub enum DefaultBrowser {
     Chromium(String),
     Firefox(String),
@@ -323,6 +369,7 @@ fn edge_login(
             crate::tr(&crate::cur_lang(), "No se pudo abrir el navegador")
         )
     })?;
+    center_window(child.id());
     match wait_callback(port, deadline) {
         Ok(url) => Ok((child, url)),
         Err(e) => {
@@ -344,7 +391,9 @@ pub fn login(
         DefaultBrowser::Firefox(exe) => {
             crate::meta_auth::note("sso", &format!("navegador: Firefox {exe}"));
             match launch_firefox(&exe, port, profile) {
-                Ok(mut child) => match bidi_wait(port, deadline, confirm) {
+                Ok(mut child) => {
+                    center_window(child.id());
+                    match bidi_wait(port, deadline, confirm) {
                     Ok(url) => {
                         crate::meta_auth::note("sso", "callback ok (Firefox)");
                         Ok((child, url))
@@ -354,7 +403,8 @@ pub fn login(
                         let _ = child.kill();
                         edge_login(confirm, port, profile, deadline)
                     }
-                },
+                    }
+                }
                 Err(e) => {
                     crate::meta_auth::note("sso", &format!("lanzar Firefox fallo: {e}; reintento Edge"));
                     edge_login(confirm, port, profile, deadline)
@@ -364,7 +414,9 @@ pub fn login(
         DefaultBrowser::Chromium(exe) => {
             crate::meta_auth::note("sso", &format!("navegador: Chromium {exe}"));
             match launch_chromium(&exe, port, profile, confirm) {
-                Ok(mut child) => match wait_callback(port, deadline) {
+                Ok(mut child) => {
+                    center_window(child.id());
+                    match wait_callback(port, deadline) {
                     Ok(url) => {
                         crate::meta_auth::note("sso", "callback ok (Chromium)");
                         Ok((child, url))
@@ -374,7 +426,8 @@ pub fn login(
                         let _ = child.kill();
                         edge_login(confirm, port, profile, deadline)
                     }
-                },
+                    }
+                }
                 Err(e) => {
                     crate::meta_auth::note("sso", &format!("lanzar Chromium fallo: {e}; reintento Edge"));
                     edge_login(confirm, port, profile, deadline)
