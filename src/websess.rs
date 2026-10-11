@@ -494,6 +494,45 @@ fn drain(ws: &mut crate::meta_auth::Ws, idc: &mut u32, secs: u64, out: &mut Vec<
     }
 }
 
+/// Extrae pedidos incrustados en el HTML (Meta los pinta sin pedirlos por red).
+const DOM_JS: &str = r#"(()=>{const h=document.documentElement.innerHTML;const out=[];const re=/"status":"([A-Z_]+)"[\s\S]{0,3000}?"app_store_item":\{"__typename":"([^"]+)","id":"(\d+)","display_name":"((?:[^"\\]|\\.)*)"(?:[\s\S]{0,1500}?"uri":"((?:[^"\\]|\\.)*)")?/g;let m;let g=0;while((m=re.exec(h))&&g++<3000){out.push([m[1],m[2],m[3],m[4],m[5]||""]);}return JSON.stringify(out);})()"#;
+
+fn dom_extract(
+    ws: &mut crate::meta_auth::Ws,
+    idc: &mut u32,
+    out: &mut Vec<(String, String, String)>,
+) {
+    let t = eval(ws, idc, DOM_JS);
+    if t.is_empty() {
+        return;
+    }
+    let arr: Vec<Vec<String>> = serde_json::from_str(&t).unwrap_or_default();
+    let mut n = 0u32;
+    for r in arr {
+        if r.len() < 4 {
+            continue;
+        }
+        let (status, ty, id, name) = (&r[0], &r[1], &r[2], &r[3]);
+        let cover = r.get(4).cloned().unwrap_or_default();
+        if id.is_empty() {
+            continue;
+        }
+        if matches!(status.as_str(), "CANCELED" | "REFUNDED" | "REVERSED" | "FAILED") {
+            continue;
+        }
+        if ty != "XSHOCApplication" {
+            continue;
+        }
+        if !out.iter().any(|(i, _, _)| i == id) {
+            out.push((id.clone(), name.clone(), cover));
+            n += 1;
+        }
+    }
+    if n > 0 {
+        crate::meta_auth::note("pedidos", &format!("{} juegos", out.len()));
+    }
+}
+
 /// Espera login en pedidos, oculta la ventana y captura (id, nombre, portada).
 pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String, String)>, String> {
     let deadline = Instant::now() + Duration::from_secs(900);
@@ -526,10 +565,12 @@ pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String, String
     }
     let mut out: Vec<(String, String, String)> = vec![];
     let mut stat = (0u32, 0u32, 0u32);
+    // Primero el DOM: la primera página viene incrustada en el HTML.
+    dom_extract(&mut ws, &mut idc, &mut out);
     // La carga fresca ya trae la primera página: recógela.
     drain(&mut ws, &mut idc, 10, &mut out, &mut stat);
     let mut quiet = 0u32;
-    for _ in 0..150 {
+    for i in 0..150 {
         if Instant::now() > deadline {
             break;
         }
@@ -544,6 +585,10 @@ pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String, String
             std::thread::sleep(Duration::from_millis(700));
         }
         drain(&mut ws, &mut idc, 4, &mut out, &mut stat);
+        // El DOM crece con el scroll (por si la red no da cuerpos).
+        if i % 3 == 2 {
+            dom_extract(&mut ws, &mut idc, &mut out);
+        }
         if out.len() == before {
             quiet += 1;
         } else {
@@ -558,6 +603,8 @@ pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String, String
         crate::meta_auth::note("pedidos", &format!("paginando por fetch ({} enviados)", post.len()));
         fetch_pages(&mut ws, &mut idc, &post, &mut out);
     }
+    // Última pasada al DOM por lo que haya quedado pintado.
+    dom_extract(&mut ws, &mut idc, &mut out);
     crate::meta_auth::note(
         "pedidos",
         &format!("resumen req={} fin={} cuerpos={} juegos={}", stat.0, stat.1, stat.2, out.len()),
