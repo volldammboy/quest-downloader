@@ -1,11 +1,13 @@
 //! Sesión web de Meta (meta.com) para el historial de pedidos.
 //!
 //! La consulta `active_entitlements` (graph.oculus.com) devuelve 500 en
-//! algunas cuentas. Alternativa: `DollyAccountOrder...Query` en
-//! `meta.com/api/graphql` con sesión web (cookies + fb_dtsg).
-//! El login es interactivo una vez; la sesión se guarda cifrada (DPAPI).
+//! algunas cuentas. Alternativa: captura de la página de pedidos con el
+//! navegador temporal (autoscroll), sin sesiones guardadas.
 
 use std::time::{Duration, Instant};
+
+use windows::Win32::Foundation::*;
+use windows::Win32::UI::WindowsAndMessaging::*;
 
 const ORDERS_URL: &str =
     "https://www.meta.com/my/orders/?order_type=digital_products&timeFilter=ALL_TIME";
@@ -102,6 +104,38 @@ fn eval(ws: &mut crate::meta_auth::Ws, id: &mut u32, expr: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Minimiza la ventana principal del navegador (tras el login): la captura
+/// sigue en segundo plano y el usuario solo ve llenarse la Biblioteca.
+fn minimize_pid(pid: u32) {
+    struct Ctx {
+        pid: u32,
+        hwnd: isize,
+    }
+    unsafe extern "system" fn cb(hwnd: HWND, lp: LPARAM) -> BOOL {
+        let ctx = &mut *(lp.0 as *mut Ctx);
+        let mut wpid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut wpid));
+        let no_owner = GetWindow(hwnd, GW_OWNER)
+            .map(|h| h == HWND(std::ptr::null_mut()))
+            .unwrap_or(true);
+        if wpid == ctx.pid && IsWindowVisible(hwnd).as_bool() && no_owner {
+            ctx.hwnd = hwnd.0 as isize;
+            return BOOL(0);
+        }
+        BOOL(1)
+    }
+    let mut ctx = Ctx { pid, hwnd: 0 };
+    unsafe {
+        let _ = EnumWindows(
+            Some(cb),
+            LPARAM(&mut ctx as *mut Ctx as isize),
+        );
+        if ctx.hwnd != 0 {
+            let _ = ShowWindow(HWND(ctx.hwnd as *mut _), SW_MINIMIZE);
+        }
+    }
+}
+
 fn parse_orders(body: &str, out: &mut Vec<(String, String)>) {
     if !(body.contains("app_store_item") || body.contains("orders_rmas")) {
         return;
@@ -138,8 +172,8 @@ fn parse_orders(body: &str, out: &mut Vec<(String, String)>) {
     }
 }
 
-/// Espera login en pedidos, autoscroll y captura (id, nombre).
-pub fn capture_orders(port: u16) -> Result<Vec<(String, String)>, String> {
+/// Espera login en pedidos, minimiza la ventana, autoscroll y captura (id, nombre).
+pub fn capture_orders(port: u16, pid: u32) -> Result<Vec<(String, String)>, String> {
     let deadline = Instant::now() + Duration::from_secs(900);
     let mut ws = page_ws(port, Instant::now() + Duration::from_secs(60))?.0;
     let mut idc = 100u32;
@@ -157,6 +191,9 @@ pub fn capture_orders(port: u16) -> Result<Vec<(String, String)>, String> {
         std::thread::sleep(Duration::from_secs(3));
     }
     crate::meta_auth::note("pedidos", "lista visible, capturando");
+    if pid != 0 {
+        minimize_pid(pid);
+    }
     let mut out: Vec<(String, String)> = vec![];
     let mut quiet = 0u32;
     for _ in 0..150 {
@@ -255,8 +292,8 @@ pub fn load_orders_file() -> Vec<(String, String)> {
 }
 
 /// Captura tras el SSO (misma ventana). Best-effort: nunca falla el vinculado.
-pub fn capture_after_sso(port: u16) {
-    match capture_orders(port) {
+pub fn capture_after_sso(port: u16, pid: u32) {
+    match capture_orders(port, pid) {
         Ok(items) if !items.is_empty() => {
             save_orders_file(&items);
             crate::meta_auth::note("pedidos", &format!("guardados {} de vinculado", items.len()));
@@ -279,7 +316,7 @@ pub fn login_interactive() -> Result<Vec<(String, String)>, String> {
     };
     let mut child = crate::browser::launch_chromium(&exe, port, &profile, ORDERS_URL)
         .map_err(|e| format!("No se pudo abrir el navegador: {e}"))?;
-    let r = capture_orders(port);
+    let r = capture_orders(port, child.id());
     let _ = child.kill();
     std::fs::remove_dir_all(&profile).ok();
     r

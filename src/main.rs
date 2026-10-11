@@ -318,9 +318,28 @@ impl App {
     fn apply_sync(&mut self, alias: String, uid: String, games: Vec<meta_auth::LibGame>) {
         if uid.starts_with("ERR:") {
             self.syncing = false;
-            // Ante el 500, vía alternativa: pedidos de la sesión web.
+            // Ante el 500, vía alternativa: primero el fichero capturado al
+            // vincular (sin navegador); si no hay, navegador manual.
             if uid.contains("500") {
                 crate::meta_auth::note("biblioteca", "500 en sync; probando pedidos");
+                let ord = crate::websess::load_orders_file();
+                if !ord.is_empty() {
+                    let games: Vec<meta_auth::LibGame> = ord
+                        .into_iter()
+                        .map(|(id, name)| meta_auth::LibGame {
+                            id,
+                            name,
+                            package: String::new(),
+                            publisher: String::new(),
+                            genres: String::new(),
+                        })
+                        .collect();
+                    let n = games.len();
+                    std::fs::remove_file(crate::websess::orders_file()).ok();
+                    self.apply_import_orders(games);
+                    self.status = format!("{} {n}", tr(&self.lang, "Juegos importados:"));
+                    return;
+                }
                 self.do_import_orders();
             }
             return;
@@ -332,6 +351,8 @@ impl App {
         if !uid.is_empty() {
             store::set_setting("meta_user_id", &uid);
         }
+        // Sync OK: el fichero de pedidos ya no hace falta.
+        std::fs::remove_file(crate::websess::orders_file()).ok();
         let mut seen = std::collections::HashSet::new();
         for g in &games {
             let game = store::Game {
@@ -599,24 +620,6 @@ impl App {
                         if !alias.is_empty() {
                             store::set_setting("meta_name", &alias);
                             self.account = alias;
-                        }
-                        // Pedidos capturados durante el vinculado: biblioteca inmediata.
-                        let ord = crate::websess::load_orders_file();
-                        if !ord.is_empty() {
-                            let games: Vec<meta_auth::LibGame> = ord
-                                .into_iter()
-                                .map(|(id, name)| meta_auth::LibGame {
-                                    id,
-                                    name,
-                                    package: String::new(),
-                                    publisher: String::new(),
-                                    genres: String::new(),
-                                })
-                                .collect();
-                            let n = games.len();
-                            self.apply_import_orders(games);
-                            std::fs::remove_file(crate::websess::orders_file()).ok();
-                            self.status = format!("{} {n}", tr(&lang, "Juegos importados:"));
                         }
                         self.do_sync();
                     }
