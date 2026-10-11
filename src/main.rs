@@ -2367,6 +2367,51 @@ fn main() -> eframe::Result<()> {
         std::thread::sleep(std::time::Duration::from_secs(90));
         return Ok(());
     }
+    if let Some(a) = std::env::args().find(|x| x.starts_with("--probe-plan2=")) {
+        let app = a.split_once('=').map(|(_, v)| v.to_string()).unwrap_or_default();
+        match (|| -> Result<(), String> {
+            let token = crate::meta_auth::profile_token()?;
+            let vars = serde_json::json!({ "itemId": app, "hmdType": "EUREKA" }).to_string();
+            let item = crate::meta_auth::query(&token, "6549406941839522", &vars, "ficha")?
+                .get("data")
+                .and_then(|d| d.get("item"))
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let bin = item.get("latest_supported_binary").cloned().unwrap_or(serde_json::Value::Null);
+            let keys: Vec<String> = bin.as_object().map(|o| o.keys().cloned().collect()).unwrap_or_default();
+            println!("PROBE bin keys={keys:?}");
+            let sid = bin.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let vars = serde_json::json!({ "binaryID": sid }).to_string();
+            let detail = crate::meta_auth::query(&token, "4734929166632773", &vars, "detalle")?
+                .get("data")
+                .and_then(|d| d.get("node"))
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            for k in ["obb_binary", "asset_files"] {
+                println!("PROBE {k}={}", detail.get(k).map(|v| {
+                    let s = serde_json::to_string(v).unwrap_or_default();
+                    s.chars().take(600).collect::<String>()
+                }).unwrap_or_default());
+            }
+            if let Some(assets) = detail.get("asset_files").and_then(|v| v.get("nodes")).and_then(|v| v.as_array()) {
+                println!("PROBE assets_n={}", assets.len());
+                for a in assets.iter().take(40) {
+                    println!(
+                        "  A {} req={} iap={} size={}",
+                        a.get("file_name").and_then(|x| x.as_str()).unwrap_or("?"),
+                        a.get("is_required").and_then(|x| x.as_bool()).unwrap_or(true),
+                        a.get("iap_item").is_some(),
+                        a.get("size").and_then(|x| x.as_u64()).unwrap_or(0)
+                    );
+                }
+            }
+            Ok(())
+        })() {
+            Ok(()) => {}
+            Err(e) => println!("PROBE plan2 ERR {e}"),
+        }
+        return Ok(());
+    }
     if let Some(a) = std::env::args().find(|x| x.starts_with("--probe-plan=")) {
         let app = a.split_once('=').map(|(_, v)| v.to_string()).unwrap_or_default();
         match (|| -> Result<(), String> {

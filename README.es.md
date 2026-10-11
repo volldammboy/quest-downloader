@@ -87,9 +87,17 @@ assets/         Icono de la aplicación (.ico/.png)
 ### Error 500 al sincronizar la biblioteca
 
 Si la sincronización falla con error 500 (puede pasar con bibliotecas muy grandes),
-deja la cuenta vinculada y añade los juegos uno por uno desde la
-sección **Tienda** (buscar → *Añadir a la biblioteca*) o descárgalos
-directamente desde la tienda.
+aparece en la cabecera el botón parpadeante "Error 500, pulsa aquí para bypass".
+Importa los juegos desde el historial de compras (un login en el navegador y luego
+automático — la biblioteca se llena progresivamente). Solo lista juegos completos:
+sin DLCs, sin bundles ni reembolsos; los títulos Rift llevan etiqueta verde PCVR.
+
+### Descargas incompletas en juegos grandes
+
+Corregido: juegos como Asgard's Wrath 2 o Batman: Arkham Shadow descargaban solo
+el APK + OBB principal porque sus chunks de parche se clasificaban como DLC opcional.
+Ahora los chunks requeridos bajan automáticamente y los packs de idioma se ofrecen
+como casillas opcionales en el diálogo de descarga.
 
 ## Aviso
 

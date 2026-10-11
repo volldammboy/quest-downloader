@@ -85,8 +85,17 @@ assets/         Application icon (.ico/.png)
 ### Error 500 when syncing the library
 
 If syncing the library fails with a 500 error (it can happen with very large
-libraries), keep the account linked and add the games one by one from the
-Store section (search → *Add to library*) or download directly from the store.
+libraries), a blinking "Error 500, click here to bypass" button appears in the
+header. It imports your games from the purchase history (one browser login,
+then automatic — the library fills in progressively). Only full games are
+listed: no DLCs, no bundles, no refunds; Rift titles keep a green PCVR tag.
+
+### Incomplete downloads in big games
+
+Fixed: games like Asgard's Wrath 2 or Batman: Arkham Shadow downloaded only
+the APK + main OBB because their patch chunks were misclassified as optional
+DLC. Required chunks now download automatically, and language packs are
+offered as optional checkboxes in the download dialog.
 
 ## Disclaimer
 
