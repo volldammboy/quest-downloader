@@ -1044,6 +1044,7 @@ pub fn sign_in() -> Result<String, String> {
         .and_then(|v| v.as_str())
         .ok_or(m(&crate::cur_lang(), "Meta no devolvió el token del perfil Quest.", "Meta did not return the Quest profile token."))?;
     save_tokens(&serde_json::json!({ "profile": profile_token }))?;
-    let (alias, _, _) = fetch_library(profile_token)?;
+    // La biblioteca puede dar 500 en algunas cuentas; no bloquea el vinculado.
+    let alias = fetch_library(profile_token).map(|(a, _, _)| a).unwrap_or_default();
     Ok(alias)
 }
