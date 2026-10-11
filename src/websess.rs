@@ -316,6 +316,7 @@ pub fn login_interactive() -> Result<WebSession, String> {
     let mut child =
         crate::browser::launch_chromium(&exe, port, &profile, ORDERS_URL)
             .map_err(|e| format!("No se pudo abrir el navegador: {e}"))?;
+    crate::meta_auth::note("websess", &format!("ventana pid={}", child.id()));
     let deadline = Instant::now() + Duration::from_secs(600);
     let (mut ws, _) = page_ws(port, deadline)?;
     // Espera a c_user (login completo).
@@ -347,6 +348,7 @@ pub fn login_interactive() -> Result<WebSession, String> {
             }
         }
         if !sess.c_user.is_empty() && sess.c_user != "0" {
+            crate::meta_auth::note("websess", "login detectado, leyendo sesión");
             let r = cdp_call(
                 &mut ws,
                 11,
