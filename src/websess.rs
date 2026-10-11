@@ -150,8 +150,8 @@ fn page_ws(port: u16, deadline: Instant) -> Result<(crate::meta_auth::Ws, String
                         }
                     }
                     let (w, url) = match (best, fallback) {
-                        (Some(w), _) => (w, best_url),
-                        (None, Some(w)) => (w, fallback_url),
+                        (Some(w), _) => (w, best_url.clone()),
+                        (None, Some(w)) => (w, fallback_url.clone()),
                         _ => continue,
                     };
                     let _ = url;
