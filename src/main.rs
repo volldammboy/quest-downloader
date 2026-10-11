@@ -39,19 +39,6 @@ enum AsyncMsg {
     Plan(String, Result<meta_auth::Plan, String>),
     Cover(String, Vec<u8>),
     Linked(Result<String, String>),
-    OwnCheck(String, bool),
-}
-
-/// Comprueba propiedad en Meta (plan descargable ⇒ entitled), uno por uno.
-fn spawn_own_check(tx: std::sync::mpsc::Sender<AsyncMsg>, ids: Vec<String>) {
-    std::thread::spawn(move || {
-        let token = meta_auth::profile_token().ok();
-        let Some(token) = token else { return };
-        for id in ids {
-            let ok = meta_auth::plan(&token, &id).is_ok();
-            tx.send(AsyncMsg::OwnCheck(id, ok)).ok();
-        }
-    });
 }
 
 struct App {
@@ -212,8 +199,37 @@ impl App {
         }
         self.searching = true;
         let tx = self.tx.clone();
+        let linked = meta_auth::is_linked();
         std::thread::spawn(move || {
-            let r = oculusdb::search_store(&q, 20).unwrap_or_default();
+            let mut r = oculusdb::search_store(&q, 20).unwrap_or_default();
+            // Propiedad resuelta antes de mostrar: las filas ya salen con Comprado.
+            if linked {
+                if let Ok(token) = meta_auth::profile_token() {
+                    let r = &mut r;
+                    // Paralelo acotado: 6 comprobaciones a la vez.
+                    const N: usize = 6;
+                    let mut i = 0;
+                    while i < r.len() {
+                        let end = (i + N).min(r.len());
+                        let ids: Vec<String> =
+                            r[i..end].iter().map(|a| a.id.clone()).collect();
+                        let oks: Vec<bool> = ids
+                            .into_iter()
+                            .map(|id| {
+                                let token = token.clone();
+                                std::thread::spawn(move || {
+                                    meta_auth::plan(&token, &id).is_ok()
+                                })
+                            })
+                            .map(|h| h.join().unwrap_or(false))
+                            .collect();
+                        for (k, ok) in oks.into_iter().enumerate() {
+                            r[i + k].owned = ok;
+                        }
+                        i = end;
+                    }
+                }
+            }
             tx.send(AsyncMsg::Search(r)).ok();
         });
     }
@@ -386,20 +402,8 @@ impl App {
                 AsyncMsg::Search(r) => {
                     self.results = r;
                     self.searching = false;
-                    if meta_auth::is_linked() {
-                        let ids: Vec<String> =
-                            self.results.iter().map(|a| a.id.clone()).collect();
-                        spawn_own_check(self.tx.clone(), ids);
-                    }
                 }
                 AsyncMsg::Sync(alias, uid, games) => self.apply_sync(alias, uid, games),
-                AsyncMsg::OwnCheck(id, ok) => {
-                    if ok {
-                        if let Some(a) = self.results.iter_mut().find(|a| a.id == id) {
-                            a.owned = true;
-                        }
-                    }
-                }
                 AsyncMsg::Plan(id, r) => {
                     self.plan_pending = false;
                     match r {
