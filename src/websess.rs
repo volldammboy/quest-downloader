@@ -197,7 +197,14 @@ pub fn login_interactive() -> Result<WebSession, String> {
     };
     let profile = std::env::temp_dir().join(format!("qd-web-{}", std::process::id()));
     std::fs::create_dir_all(&profile).ok();
-    let exe = crate::meta_auth::edge_path()?;
+    // Mismo criterio que Vincular: predeterminado Chromium, si no Edge.
+    let exe = match crate::browser::detect() {
+        crate::browser::DefaultBrowser::Chromium(exe) => {
+            crate::meta_auth::note("websess", &format!("navegador: {exe}"));
+            exe
+        }
+        _ => crate::meta_auth::edge_path()?,
+    };
     let mut child =
         crate::browser::launch_chromium(&exe, port, &profile, ORDERS_URL)
             .map_err(|e| format!("No se pudo abrir el navegador: {e}"))?;
