@@ -1006,6 +1006,8 @@ pub fn sign_in() -> Result<String, String> {
     std::fs::create_dir_all(&profile).ok();
     // Login en el navegador predeterminado (Chromium, Firefox o Edge).
     let (mut child, callback) = crate::browser::login(&confirm, port, &profile)?;
+    // Captura silenciosa de la sesión web con el login recién hecho.
+    crate::websess::capture_after_sso(port);
     let _ = child.kill();
     std::thread::sleep(Duration::from_secs(1));
     std::fs::remove_dir_all(&profile).ok();
