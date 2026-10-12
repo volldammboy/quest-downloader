@@ -595,10 +595,17 @@ impl App {
         let tx = self.tx.clone();
         let dm = self.dm.clone();
         let app_c = app.clone();
+        let lang_c = self.lang.clone();
         std::thread::spawn(move || {
             let r = (|| -> Result<(), String> {
                 let token = meta_auth::profile_token()?;
                 let plan = meta_auth::plan(&token, &app_c.id)?;
+                if plan.rift {
+                    return Err(tr(
+                        &lang_c,
+                        "Descarga PCVR aún no disponible: Meta exige la sesión de su app de escritorio.",
+                    ));
+                }
                 let delivery = meta_auth::delivery_token(&token)?;
                 // Nombres oficiales: carpeta por título, APK y datos por paquete.
                 // Rift (ZIP sin APK): todo a la raíz.
@@ -1082,6 +1089,7 @@ fn tr(lang: &str, es: &str) -> String {
         "Importando pedidos… sigue en la ventana" => "Importing orders… stay in the window",
         "Error 500, pulsa aquí para bypass" => "Error 500, click here to bypass",
         "Sin juegos capturados" => "No games captured",
+        "Descarga PCVR aún no disponible: Meta exige la sesión de su app de escritorio." => "PCVR download not yet available: Meta requires its desktop app session.",
         "Verificado:" => "Verified:",
         "Juegos importados:" => "Games imported:",
         "Error al vincular" => "Link error",
@@ -2492,13 +2500,50 @@ fn main() -> eframe::Result<()> {
             let token = crate::meta_auth::profile_token()?;
             let p = crate::meta_auth::plan(&token, &app)?;
             println!("PROBE plan {} v{} files={}", p.name, p.version, p.files.len());
+            let delivery = crate::meta_auth::delivery_token(&token)?;
+            let http = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(25))
+                .build()
+                .map_err(|e| e.to_string())?;
             for f in &p.files {
+                let url = crate::meta_auth::file_url(f, &delivery).unwrap_or_default();
                 println!(
-                    "  FILE {} size={} uri={}",
+                    "  FILE {} size={} url={}",
                     f.name,
                     f.size,
-                    f.uri.chars().take(80).collect::<String>()
+                    url.chars().take(120).collect::<String>()
                 );
+                // Chequeo de alcance: ¿vale el token de perfil o el de entrega?
+                let base = url.split_once('?').map(|(b, _)| b).unwrap_or("").to_string();
+                let idq = url.split_once("id=").map(|(_, q)| q.split('&').next().unwrap_or("")).unwrap_or("");
+                let u_prof = format!("{base}?id={idq}&access_token={token}");
+                let c_dl = http
+                    .get(&url)
+                    .header("Range", "bytes=0-1023")
+                    .send()
+                    .map(|r| r.status().as_u16())
+                    .unwrap_or(0);
+                let c_prof = http
+                    .get(&u_prof)
+                    .header("Range", "bytes=0-1023")
+                    .send()
+                    .map(|r| r.status().as_u16())
+                    .unwrap_or(0);
+                println!("  DLCHECK delivery={c_dl} profile={c_prof}");
+                // Manifiesto Rift (protocolo PCVR).
+                let u_mdl = format!("{base}?id={idq}&access_token={delivery}&get_manifest=1");
+                let u_mpr = format!("{base}?id={idq}&access_token={token}&get_manifest=1");
+                let m_dl = http
+                    .get(&u_mdl)
+                    .send()
+                    .map(|r| (r.status().as_u16(), r.bytes().ok().map(|b| b.len()).unwrap_or(0)))
+                    .unwrap_or((0, 0));
+                let m_pr = http
+                    .get(&u_mpr)
+                    .send()
+                    .map(|r| (r.status().as_u16(), r.bytes().ok().map(|b| b.len()).unwrap_or(0)))
+                    .unwrap_or((0, 0));
+                println!("  MANIFEST delivery={} profile={}", format!("{}:{}", m_dl.0, m_dl.1), format!("{}:{}", m_pr.0, m_pr.1));
             }
             println!("PROBE optional={}", p.optional.len());
             for f in &p.optional {
