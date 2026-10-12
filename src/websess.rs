@@ -861,6 +861,7 @@ pub fn rift_session() -> Result<String, String> {
         .map(|t| now_secs().saturating_sub(t) < 12 * 3600)
         .unwrap_or(false);
     if fresh {
+        crate::meta_auth::note("rift", "sesión reciente: invisible");
         if let Ok(mut headless) =
             crate::browser::launch_chromium_headless(&exe, port, &profile, ORDERS_URL)
         {
@@ -868,20 +869,30 @@ pub fn rift_session() -> Result<String, String> {
                 let r = browser_cookies(port);
                 let _ = headless.kill();
                 if r.is_ok() {
+                    crate::meta_auth::note("rift", "cookies ok (headless)");
                     crate::store::set_setting("web_cookies_at", &now_secs().to_string());
+                } else {
+                    crate::meta_auth::note("rift", "sin cookies (headless)");
                 }
                 return r;
             }
+            crate::meta_auth::note("rift", "sin sesión: ventana visible");
             let _ = headless.kill();
             std::thread::sleep(Duration::from_secs(2));
         }
+    } else {
+        crate::meta_auth::note("rift", "sin sesión reciente: ventana visible");
     }
     let mut child = crate::browser::launch_chromium(&exe, port, &profile, ORDERS_URL)
         .map_err(|e| format!("No se pudo abrir el navegador: {e}"))?;
+    crate::meta_auth::note("rift", "esperando login en la ventana");
     let r = wait_orders(port, 600).and_then(|_| browser_cookies(port));
     let _ = child.kill();
     if r.is_ok() {
+        crate::meta_auth::note("rift", "cookies ok (visible)");
         crate::store::set_setting("web_cookies_at", &now_secs().to_string());
+    } else {
+        crate::meta_auth::note("rift", "sin cookies (visible)");
     }
     r
 }

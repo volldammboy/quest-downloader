@@ -578,6 +578,7 @@ impl App {
 
     fn open_download_dialog(&mut self, app: store::Game) {
         if self.plan_pending {
+            self.status = tr(&self.lang, "Ya hay una descarga preparándose, espera…");
             return;
         }
         self.plan_pending = true;
@@ -1112,6 +1113,7 @@ fn tr(lang: &str, es: &str) -> String {
         "Importando pedidos… sigue en la ventana" => "Importing orders… stay in the window",
         "Error 500, pulsa aquí para bypass" => "Error 500, click here to bypass",
         "Sin juegos capturados" => "No games captured",
+        "Ya hay una descarga preparándose, espera…" => "A download is being prepared, wait…",
         "Descargando Rift…" => "Downloading Rift…",
         "Rift descargado." => "Rift downloaded.",
         "Verificado:" => "Verified:",
