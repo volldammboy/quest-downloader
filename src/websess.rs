@@ -769,7 +769,7 @@ pub fn capture_orders(
 
 /// Comprueba en headless si la sesión ya lista pedidos (sin ventana).
 fn headless_listed(port: u16) -> bool {
-    let mut ws = match page_ws(port, Instant::now() + Duration::from_secs(25)) {
+    let mut ws = match page_ws(port, Instant::now() + Duration::from_secs(12)) {
         Ok((w, _)) => w,
         Err(_) => return false,
     };
@@ -778,7 +778,7 @@ fn headless_listed(port: u16) -> bool {
     if cdp_call(&mut ws, 20, "Page.navigate", &nav).is_err() {
         return false;
     }
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = Instant::now() + Duration::from_secs(12);
     loop {
         if Instant::now() > deadline {
             return false;
@@ -835,6 +835,13 @@ fn wait_orders(port: u16, secs: u64) -> Result<(), String> {
     }
 }
 
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 /// Sesión web para Rift: headless si vale, visible con login si no.
 /// Devuelve cabecera Cookie lista para usar desde Rust.
 pub fn rift_session() -> Result<String, String> {
@@ -848,21 +855,34 @@ pub fn rift_session() -> Result<String, String> {
         crate::browser::DefaultBrowser::Chromium(exe) => exe,
         _ => crate::meta_auth::edge_path()?,
     };
-    if let Ok(mut headless) =
-        crate::browser::launch_chromium_headless(&exe, port, &profile, ORDERS_URL)
-    {
-        if headless_listed(port) {
-            let r = browser_cookies(port);
+    // Sesión reciente: prueba invisible; si no, directo a visible.
+    let fresh = crate::store::get_setting("web_cookies_at")
+        .parse::<u64>()
+        .map(|t| now_secs().saturating_sub(t) < 12 * 3600)
+        .unwrap_or(false);
+    if fresh {
+        if let Ok(mut headless) =
+            crate::browser::launch_chromium_headless(&exe, port, &profile, ORDERS_URL)
+        {
+            if headless_listed(port) {
+                let r = browser_cookies(port);
+                let _ = headless.kill();
+                if r.is_ok() {
+                    crate::store::set_setting("web_cookies_at", &now_secs().to_string());
+                }
+                return r;
+            }
             let _ = headless.kill();
-            return r;
+            std::thread::sleep(Duration::from_secs(2));
         }
-        let _ = headless.kill();
-        std::thread::sleep(Duration::from_secs(2));
     }
     let mut child = crate::browser::launch_chromium(&exe, port, &profile, ORDERS_URL)
         .map_err(|e| format!("No se pudo abrir el navegador: {e}"))?;
     let r = wait_orders(port, 600).and_then(|_| browser_cookies(port));
     let _ = child.kill();
+    if r.is_ok() {
+        crate::store::set_setting("web_cookies_at", &now_secs().to_string());
+    }
     r
 }
 
