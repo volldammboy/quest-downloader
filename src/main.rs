@@ -9,6 +9,7 @@ mod websess;
 mod meta_auth;
 mod oculusdb;
 mod store;
+mod rift;
 
 use downloader::{DownloadManager, JobStatus};
 use eframe::egui;
@@ -42,6 +43,8 @@ enum AsyncMsg {
     Linked(Result<String, String>),
     ImportOrders(Result<Vec<meta_auth::LibGame>, String>),
     ImportProgress(Vec<meta_auth::LibGame>),
+    RiftStatus(String),
+    RiftDone(()),
     PlatformDone((u32, u32)),
 }
 
@@ -601,10 +604,24 @@ impl App {
                 let token = meta_auth::profile_token()?;
                 let plan = meta_auth::plan(&token, &app_c.id)?;
                 if plan.rift {
-                    return Err(tr(
-                        &lang_c,
-                        "Descarga PCVR aún no disponible: Meta exige la sesión de su app de escritorio.",
-                    ));
+                    let bid = plan.files.first().map(|f| f.id.clone()).unwrap_or_default();
+                    let folder = game_folder(&app_c.name);
+                    std::fs::create_dir_all(&folder).ok();
+                    let cookie = crate::websess::rift_session()?;
+                    let tx2 = tx.clone();
+                    let lang2 = lang_c.clone();
+                    crate::rift::download_rift(&folder, &bid, &cookie, &|done, total| {
+                        tx2.send(AsyncMsg::RiftStatus(format!(
+                            "{} {} / {}",
+                            tr(&lang2, "Descargando Rift…"),
+                            mb(done),
+                            mb(total)
+                        )))
+                        .ok();
+                    })?;
+                    tx.send(AsyncMsg::RiftStatus(tr(&lang_c, "Rift descargado."))).ok();
+                    tx.send(AsyncMsg::RiftDone(())).ok();
+                    return Ok(());
                 }
                 let delivery = meta_auth::delivery_token(&token)?;
                 // Nombres oficiales: carpeta por título, APK y datos por paquete.
@@ -690,6 +707,12 @@ impl App {
                         crate::meta_auth::note("pedidos", &format!("fallo: {}", e.chars().take(160).collect::<String>()));
                     }
                 },
+                AsyncMsg::RiftStatus(s) => {
+                    self.status = s;
+                }
+                AsyncMsg::RiftDone(()) => {
+                    self.refresh_library();
+                }
                 AsyncMsg::PlatformDone((added, removed)) => {
                     self.refresh_library();
                     self.ensure_covers();
@@ -1089,7 +1112,8 @@ fn tr(lang: &str, es: &str) -> String {
         "Importando pedidos… sigue en la ventana" => "Importing orders… stay in the window",
         "Error 500, pulsa aquí para bypass" => "Error 500, click here to bypass",
         "Sin juegos capturados" => "No games captured",
-        "Descarga PCVR aún no disponible: Meta exige la sesión de su app de escritorio." => "PCVR download not yet available: Meta requires its desktop app session.",
+        "Descargando Rift…" => "Downloading Rift…",
+        "Rift descargado." => "Rift downloaded.",
         "Verificado:" => "Verified:",
         "Juegos importados:" => "Games imported:",
         "Error al vincular" => "Link error",
@@ -2431,6 +2455,38 @@ fn main() -> eframe::Result<()> {
         let s = crate::server::toggle();
         println!("PROBE srv running={} {}:{} token={} err={}", s.running, s.ip, crate::server::PORT, s.token, s.error);
         std::thread::sleep(std::time::Duration::from_secs(90));
+        return Ok(());
+    }
+    if std::env::args().any(|a| a == "--probe-cookies") {
+        let port = {
+            let s = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            s.local_addr().unwrap().port()
+        };
+        let profile = crate::websess::web_profile();
+        let exe = match crate::browser::detect() {
+            crate::browser::DefaultBrowser::Chromium(exe) => exe,
+            _ => {
+                println!("PROBE cookies ERR sin chromium");
+                return Ok(());
+            }
+        };
+        let mut child = match crate::browser::launch_chromium_headless(
+            &exe,
+            port,
+            &profile,
+            "https://www.meta.com/my/orders/?order_type=digital_products&timeFilter=ALL_TIME",
+        ) {
+            Ok(c) => c,
+            Err(e) => {
+                println!("PROBE cookies ERR lanzar: {e}");
+                return Ok(());
+            }
+        };
+        match crate::websess::cookie_names(port) {
+            Ok(n) => println!("PROBE cookies={n:?}"),
+            Err(e) => println!("PROBE cookies ERR {e}"),
+        }
+        let _ = child.kill();
         return Ok(());
     }
     if let Some(a) = std::env::args().find(|x| x.starts_with("--probe-q=")) {

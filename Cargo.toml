@@ -16,6 +16,8 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 tiny_http = "0.12"
 image = "0.25"
 tungstenite = "0.26"
+flate2 = "1"
+zip = "2"
 windows = { version = "0.58", features = ["Win32_Security_Cryptography", "Win32_Foundation", "Win32_Globalization", "Win32_System_Registry", "Win32_UI_WindowsAndMessaging"] }
 
 [build-dependencies]

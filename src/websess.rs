@@ -791,6 +791,100 @@ fn headless_listed(port: u16) -> bool {
     }
 }
 
+/// Cabecera Cookie completa (con valores) para la sesión del navegador.
+pub fn browser_cookies(port: u16) -> Result<String, String> {
+    let (mut ws, _) = page_ws(port, Instant::now() + Duration::from_secs(25))?;
+    let v = cdp_call(&mut ws, 11, "Network.getAllCookies", "{}")?;
+    let mut out = vec![];
+    if let Some(arr) = v
+        .get("result")
+        .and_then(|x| x.get("cookies"))
+        .and_then(|x| x.as_array())
+    {
+        for c in arr {
+            let n = c.get("name").and_then(|x| x.as_str()).unwrap_or("");
+            let val = c.get("value").and_then(|x| x.as_str()).unwrap_or("");
+            if !n.is_empty() && !val.is_empty() {
+                out.push(format!("{n}={val}"));
+            }
+        }
+    }
+    if out.is_empty() {
+        return Err("Sin cookies de sesión.".into());
+    }
+    Ok(out.join("; "))
+}
+
+/// Espera la lista de pedidos (tras login) sin capturar nada.
+fn wait_orders(port: u16, secs: u64) -> Result<(), String> {
+    let (mut ws, _) = page_ws(port, Instant::now() + Duration::from_secs(60))?;
+    let mut idc = 200u32;
+    cdp_call(&mut ws, 210, "Network.enable", "{}").ok();
+    let nav = serde_json::json!({"url": ORDERS_URL}).to_string();
+    cdp_call(&mut ws, 211, "Page.navigate", &nav).ok();
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    loop {
+        if Instant::now() > deadline {
+            return Err("sin login en pedidos".into());
+        }
+        let t = eval(&mut ws, &mut idc, "document.body.innerText.slice(0,2000)");
+        if t.contains("N.º de pedido") || t.contains("Comprado") || t.contains("Order #") {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_secs(3));
+    }
+}
+
+/// Sesión web para Rift: headless si vale, visible con login si no.
+/// Devuelve cabecera Cookie lista para usar desde Rust.
+pub fn rift_session() -> Result<String, String> {
+    let port = {
+        let s = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
+        s.local_addr().map_err(|e| e.to_string())?.port()
+    };
+    let profile = web_profile();
+    std::fs::create_dir_all(&profile).ok();
+    let exe = match crate::browser::detect() {
+        crate::browser::DefaultBrowser::Chromium(exe) => exe,
+        _ => crate::meta_auth::edge_path()?,
+    };
+    if let Ok(mut headless) =
+        crate::browser::launch_chromium_headless(&exe, port, &profile, ORDERS_URL)
+    {
+        if headless_listed(port) {
+            let r = browser_cookies(port);
+            let _ = headless.kill();
+            return r;
+        }
+        let _ = headless.kill();
+        std::thread::sleep(Duration::from_secs(2));
+    }
+    let mut child = crate::browser::launch_chromium(&exe, port, &profile, ORDERS_URL)
+        .map_err(|e| format!("No se pudo abrir el navegador: {e}"))?;
+    let r = wait_orders(port, 600).and_then(|_| browser_cookies(port));
+    let _ = child.kill();
+    r
+}
+
+/// Nombres de cookies visibles por CDP (sin valores, solo inventario).
+pub fn cookie_names(port: u16) -> Result<Vec<String>, String> {
+    let (mut ws, _) = page_ws(port, Instant::now() + Duration::from_secs(25))?;
+    let v = cdp_call(&mut ws, 11, "Network.getAllCookies", "{}")?;
+    let mut out = vec![];
+    if let Some(arr) = v
+        .get("result")
+        .and_then(|x| x.get("cookies"))
+        .and_then(|x| x.as_array())
+    {
+        for c in arr {
+            let d = c.get("domain").and_then(|x| x.as_str()).unwrap_or("");
+            let n = c.get("name").and_then(|x| x.as_str()).unwrap_or("");
+            out.push(format!("{n}@{d}"));
+        }
+    }
+    Ok(out)
+}
+
 /// Login web interactivo (bypass manual del error 500).
 pub fn login_interactive(
     progress: &dyn Fn(Vec<(String, String, String)>),
