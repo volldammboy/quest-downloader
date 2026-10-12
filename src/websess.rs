@@ -885,6 +885,7 @@ pub fn rift_session() -> Result<String, String> {
     }
     let mut child = crate::browser::launch_chromium(&exe, port, &profile, ORDERS_URL)
         .map_err(|e| format!("No se pudo abrir el navegador: {e}"))?;
+    crate::browser::center_window(child.id());
     crate::meta_auth::note("rift", "esperando login en la ventana");
     let r = wait_orders(port, 600).and_then(|_| browser_cookies(port));
     let _ = child.kill();

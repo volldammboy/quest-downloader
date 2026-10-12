@@ -605,6 +605,8 @@ impl App {
                 let token = meta_auth::profile_token()?;
                 let plan = meta_auth::plan(&token, &app_c.id)?;
                 if plan.rift {
+                    tx.send(AsyncMsg::RiftStatus(tr(&lang_c, "Conectando con Meta…")))
+                        .ok();
                     let bid = plan.files.first().map(|f| f.id.clone()).unwrap_or_default();
                     let folder = game_folder(&app_c.name);
                     std::fs::create_dir_all(&folder).ok();
@@ -1115,6 +1117,7 @@ fn tr(lang: &str, es: &str) -> String {
         "Sin juegos capturados" => "No games captured",
         "Ya hay una descarga preparándose, espera…" => "A download is being prepared, wait…",
         "Descargando Rift…" => "Downloading Rift…",
+        "Conectando con Meta…" => "Connecting to Meta…",
         "Rift descargado." => "Rift downloaded.",
         "Verificado:" => "Verified:",
         "Juegos importados:" => "Games imported:",
