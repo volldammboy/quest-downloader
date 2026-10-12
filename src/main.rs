@@ -601,15 +601,19 @@ impl App {
                 let plan = meta_auth::plan(&token, &app_c.id)?;
                 let delivery = meta_auth::delivery_token(&token)?;
                 // Nombres oficiales: carpeta por título, APK y datos por paquete.
+                // Rift (ZIP sin APK): todo a la raíz.
                 let folder = game_folder(&app_c.name);
                 let apk = apk_name(&plan.package);
                 let pkg = plan.package.trim().to_string();
                 let obb = if pkg.is_empty() { "obb".into() } else { pkg };
-                std::fs::create_dir_all(&folder).ok();
-                std::fs::create_dir_all(folder.join(&obb)).ok();
-                oculusdb::save_json(&folder.join(format!("{}.json", app_c.id)), &to_store_app(&app_c));
                 let mut files = plan.files;
                 files.extend(extra);
+                let apk_plan = files.iter().any(|f| f.name == "base.apk");
+                std::fs::create_dir_all(&folder).ok();
+                if apk_plan {
+                    std::fs::create_dir_all(folder.join(&obb)).ok();
+                }
+                oculusdb::save_json(&folder.join(format!("{}.json", app_c.id)), &to_store_app(&app_c));
                 for f in &files {
                     let mut name = std::path::Path::new(&f.name)
                         .file_name()
@@ -623,7 +627,7 @@ impl App {
                         name = apk.clone();
                     }
                     let url = meta_auth::file_url(f, &delivery)?;
-                    let dest = if name.to_lowercase().ends_with(".apk") {
+                    let dest = if !apk_plan || name.to_lowercase().ends_with(".apk") {
                         folder.join(&name)
                     } else {
                         folder.join(&obb).join(&name)
@@ -870,11 +874,19 @@ fn apk_name(package: &str) -> String {
     }
 }
 
-/// ¿APK ya descargado? (layouts nuevo y antiguos).
+/// ¿APK ya descargado? (layouts nuevo y antiguos; Rift: ZIP).
 fn has_apk(g: &store::Game) -> bool {
     for dir in [game_folder(&g.name), game_folder(&g.package)] {
         if dir.join(apk_name(&g.package)).exists() || dir.join("base.apk").exists() {
             return true;
+        }
+        if let Ok(rd) = std::fs::read_dir(&dir) {
+            if rd.flatten().map(|x| x.path()).any(|p| {
+                p.extension().and_then(|x| x.to_str()).map(|e| e.to_lowercase())
+                    == Some("zip".into()) && p.is_file()
+            }) {
+                return true;
+            }
         }
     }
     false
@@ -2411,6 +2423,22 @@ fn main() -> eframe::Result<()> {
         let s = crate::server::toggle();
         println!("PROBE srv running={} {}:{} token={} err={}", s.running, s.ip, crate::server::PORT, s.token, s.error);
         std::thread::sleep(std::time::Duration::from_secs(90));
+        return Ok(());
+    }
+    if let Some(a) = std::env::args().find(|x| x.starts_with("--probe-q=")) {
+        let p = a.split_once('=').map(|(_, v)| v.to_string()).unwrap_or_default();
+        let (doc, vars) = p.split_once(',').unwrap_or(("", ""));
+        match (|| -> Result<(), String> {
+            let token = crate::meta_auth::profile_token()?;
+            let v = crate::meta_auth::query(&token, doc, vars, "sonda")?;
+            let s = serde_json::to_string(&v).unwrap_or_default();
+            println!("PROBE q len={}", s.len());
+            println!("{}", s.chars().take(3000).collect::<String>());
+            Ok(())
+        })() {
+            Ok(()) => {}
+            Err(e) => println!("PROBE q ERR {e}"),
+        }
         return Ok(());
     }
     if let Some(a) = std::env::args().find(|x| x.starts_with("--probe-plan2=")) {

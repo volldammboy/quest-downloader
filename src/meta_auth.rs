@@ -403,6 +403,7 @@ pub struct Plan {
     pub version: String,
     pub files: Vec<PlanFile>,
     pub optional: Vec<PlanFile>,
+    pub rift: bool,
 }
 
 fn str_of(v: Option<&serde_json::Value>) -> String {
@@ -425,7 +426,90 @@ pub fn plan(token: &str, app_id: &str) -> Result<Plan, String> {
         .unwrap_or(serde_json::Value::Null);
     let mut application = node.clone();
     let mut released = serde_json::Value::Null;
+    let mk = |id: String, name: String, uri: String, size: u64, iap: bool| PlanFile {
+        id,
+        name,
+        uri,
+        size,
+        iap,
+    };
+    // ¿Rift? Binarios PC (ZIP completo por canal).
+    let mut pcbs: Vec<serde_json::Value> = ["primary_binaries", "binaries"]
+        .iter()
+        .filter_map(|k| node.get(*k))
+        .flat_map(nodes)
+        .filter(|b| {
+            b.get("__typename").and_then(|t| t.as_str()) == Some("PCBinary")
+        })
+        .collect();
+    pcbs.sort_by_key(|b| {
+        std::cmp::Reverse(
+            b.get("version_code")
+                .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+                .unwrap_or(0),
+        )
+    });
+    // Preferencia al canal LIVE.
+    let live = pcbs.iter().find(|b| {
+        b.get("binary_release_channels")
+            .and_then(|c| c.get("nodes"))
+            .and_then(|n| n.as_array())
+            .map(|a| {
+                a.iter().any(|c| {
+                    c.get("channel_name").and_then(|x| x.as_str()) == Some("LIVE")
+                })
+            })
+            .unwrap_or(false)
+    });
+    let rift_pick = live.cloned().or_else(|| pcbs.into_iter().next());
     if !quest_app(&application) {
+        if let Some(rb) = rift_pick {
+            let sid = str_of(rb.get("id"));
+            let vars = serde_json::json!({ "binaryID": sid }).to_string();
+            let detail = query(token, "4734929166632773", &vars, &step)?
+                .get("data")
+                .and_then(|d| d.get("node"))
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            let mut binary = rb.as_object().cloned().unwrap_or_default();
+            if let Some(do_) = detail.as_object() {
+                for (k, v) in do_ {
+                    binary.insert(k.clone(), v.clone());
+                }
+            }
+            let binary = serde_json::Value::Object(binary);
+            if binary.get("platform").and_then(|p| p.as_str()) != Some("PC") {
+                return Err(m(&crate::cur_lang(), "Lo que devolvió Meta no es un build de PC.", "What Meta returned is not a PC build.").into());
+            }
+            let fname = str_of(binary.get("file_name"));
+            if fname.is_empty() || str_of(binary.get("uri")).is_empty() {
+                return Err(m(&crate::cur_lang(), "Meta no devolvió ZIP descargable.", "Meta did not return a downloadable ZIP.").into());
+            }
+            return Ok(Plan {
+                name: application
+                    .get("display_name")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| {
+                        binary
+                            .get("binary_application")
+                            .and_then(|b| b.get("display_name"))
+                            .and_then(|v| v.as_str())
+                    })
+                    .unwrap_or("?")
+                    .to_string(),
+                package: String::new(),
+                version: str_of(binary.get("version")),
+                files: vec![mk(
+                    str_of(binary.get("id")),
+                    fname,
+                    str_of(binary.get("uri")),
+                    u64_of(binary.get("size")),
+                    false,
+                )],
+                optional: vec![],
+                rift: true,
+            });
+        }
         let vars = serde_json::json!({ "itemId": app_id, "hmdType": "EUREKA" }).to_string();
         let listing = query(token, "6549406941839522", &vars, &step)?
             .get("data")
@@ -503,13 +587,6 @@ pub fn plan(token: &str, app_id: &str) -> Result<Plan, String> {
     {
         return Err(m(&crate::cur_lang(), "Lo que devolvió Meta no es un APK de Quest.", "What Meta returned is not a Quest APK.").into());
     }
-    let mk = |id: String, name: String, uri: String, size: u64, iap: bool| PlanFile {
-        id,
-        name,
-        uri,
-        size,
-        iap,
-    };
     let mut files = vec![mk(
         str_of(binary.get("id")),
         "base.apk".into(),
@@ -574,6 +651,7 @@ pub fn plan(token: &str, app_id: &str) -> Result<Plan, String> {
         version: str_of(binary.get("version")),
         files,
         optional,
+        rift: false,
     })
 }
 
