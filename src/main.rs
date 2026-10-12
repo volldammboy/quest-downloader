@@ -2462,6 +2462,56 @@ fn main() -> eframe::Result<()> {
         std::thread::sleep(std::time::Duration::from_secs(90));
         return Ok(());
     }
+    if let Some(a) = std::env::args().find(|x| x.starts_with("--probe-rift=")) {
+        let appid = a["--probe-rift=".len()..].to_string();
+        let token = match crate::meta_auth::profile_token() {
+            Ok(t) => t,
+            Err(e) => {
+                println!("PROBE rift ERR token: {e}");
+                return Ok(());
+            }
+        };
+        let plan = match crate::meta_auth::plan(&token, &appid) {
+            Ok(p) => p,
+            Err(e) => {
+                println!("PROBE rift ERR plan: {e}");
+                return Ok(());
+            }
+        };
+        let bid = plan.files.first().map(|f| f.id.clone()).unwrap_or_default();
+        println!("PROBE rift {rift} bid={bid}", rift = plan.rift);
+        let cookie = match crate::websess::rift_session() {
+            Ok(c) => c,
+            Err(e) => {
+                println!("PROBE rift ERR sesion: {e}");
+                return Ok(());
+            }
+        };
+        println!("PROBE rift cookies_len={}", cookie.len());
+        let http = match reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+        {
+            Ok(h) => h,
+            Err(e) => {
+                println!("PROBE rift ERR http: {e}");
+                return Ok(());
+            }
+        };
+        for host in ["securecdn.oculus.com", "securecdn-bcn1-1.oculus.com"] {
+            let url = format!("https://{host}/binaries/download/?id={bid}&get_manifest=1");
+            match http.get(&url).header("Cookie", &cookie).send() {
+                Ok(r) => {
+                    let st = r.status().as_u16();
+                    let b = r.bytes().map(|x| x.to_vec()).unwrap_or_default();
+                    let head = String::from_utf8_lossy(&b[..b.len().min(80)]).to_string();
+                    println!("PROBE rift {host}: HTTP {st} len={} head={head:?}", b.len());
+                }
+                Err(e) => println!("PROBE rift {host}: ERR {e}"),
+            }
+        }
+        return Ok(());
+    }
     if std::env::args().any(|a| a == "--probe-cookies") {
         let port = {
             let s = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

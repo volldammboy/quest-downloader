@@ -82,6 +82,8 @@ pub fn download_rift(
             std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
         }
         let mut out = std::fs::File::create(&dest).map_err(|e| e.to_string())?;
+        // Forma real (manifiestos locales del cliente PC):
+        // segments: [[offset, sha256hex, tam_comp], ...], segmentSize 10MB.
         let segs: Vec<String> = f
             .get("segments")
             .and_then(|x| x.as_array())
@@ -89,17 +91,20 @@ pub fn download_rift(
             .unwrap_or_default()
             .iter()
             .filter_map(|s| {
-                if let Some(a) = s.as_str() {
-                    Some(a.to_string())
-                } else {
-                    s.as_array().and_then(|a| {
-                        a.iter()
-                            .rev()
-                            .filter_map(|x| x.as_str())
-                            .next()
-                            .map(|x| x.to_string())
-                    })
-                }
+                s.as_array().and_then(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str())
+                        .find(|x| x.len() == 64)
+                        .map(|x| x.to_string())
+                })
+                .or_else(|| {
+                    if let Some(a) = s.as_str() {
+                        if a.len() == 64 {
+                            return Some(a.to_string());
+                        }
+                    }
+                    None
+                })
             })
             .collect();
         for sha in segs {
