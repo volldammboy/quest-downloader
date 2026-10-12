@@ -2488,8 +2488,11 @@ fn main() -> eframe::Result<()> {
             }
         };
         println!("PROBE rift cookies_len={}", cookie.len());
+        // ¿Autoriza el CDN la sesión web? Primero con QD, luego con el navegador.
+        let mani =
+            format!("https://securecdn.oculus.com/binaries/download/?id={bid}&get_manifest=1");
         let http = match reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
+            .timeout(std::time::Duration::from_secs(45))
             .build()
         {
             Ok(h) => h,
@@ -2498,17 +2501,45 @@ fn main() -> eframe::Result<()> {
                 return Ok(());
             }
         };
-        for host in ["securecdn.oculus.com", "securecdn-bcn1-1.oculus.com"] {
-            let url = format!("https://{host}/binaries/download/?id={bid}&get_manifest=1");
-            match http.get(&url).header("Cookie", &cookie).send() {
-                Ok(r) => {
-                    let st = r.status().as_u16();
-                    let b = r.bytes().map(|x| x.to_vec()).unwrap_or_default();
-                    let head = String::from_utf8_lossy(&b[..b.len().min(80)]).to_string();
-                    println!("PROBE rift {host}: HTTP {st} len={} head={head:?}", b.len());
-                }
-                Err(e) => println!("PROBE rift {host}: ERR {e}"),
+        match http.get(&mani).header("Cookie", &cookie).send() {
+            Ok(r) => {
+                let st = r.status().as_u16();
+                let b = r.bytes().map(|x| x.to_vec()).unwrap_or_default();
+                println!(
+                    "PROBE rift QD-direct: HTTP {st} len={} head={:?}",
+                    b.len(),
+                    String::from_utf8_lossy(&b[..b.len().min(60)]).to_string()
+                );
             }
+            Err(e) => println!("PROBE rift QD-direct: ERR {e}"),
+        }
+        // Y con el propio navegador (misma TLS + cookies de sesión).
+        let port = {
+            let s = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            s.local_addr().unwrap().port()
+        };
+        let profile = crate::websess::web_profile();
+        let exe = match crate::browser::detect() {
+            crate::browser::DefaultBrowser::Chromium(exe) => exe,
+            _ => {
+                println!("PROBE rift navegador: sin chromium");
+                return Ok(());
+            }
+        };
+        match crate::browser::launch_chromium_headless(
+            &exe,
+            port,
+            &profile,
+            "https://www.meta.com/my/orders/?order_type=digital_products&timeFilter=ALL_TIME",
+        ) {
+            Ok(mut child) => {
+                match crate::websess::browser_get_status(port, &mani, 60) {
+                    Ok(s) => println!("PROBE rift navegador: {s}"),
+                    Err(e) => println!("PROBE rift navegador: ERR {e}"),
+                }
+                let _ = child.kill();
+            }
+            Err(e) => println!("PROBE rift navegador: ERR lanzar: {e}"),
         }
         return Ok(());
     }

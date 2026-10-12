@@ -898,6 +898,76 @@ pub fn rift_session() -> Result<String, String> {
     r
 }
 
+/// Pide una URL con el navegador (misma TLS + cookies) y devuelve estado.
+/// Sirve para saber si el CDN autoriza la sesión web (200+ZIP) o no.
+pub fn browser_get_status(port: u16, url: &str, secs: u64) -> Result<String, String> {
+    let (mut ws, _) = page_ws(port, Instant::now() + Duration::from_secs(25))?;
+    let nav = serde_json::json!({"url": url}).to_string();
+    ws.send_text(&format!(
+        r#"{{"id":310,"method":"Network.enable","params":{{}}}}"#
+    ))
+    .ok();
+    // Vacía la cola de eventos previos.
+    pending().clear();
+    ws.send_text(&format!(
+        r#"{{"id":311,"method":"Page.navigate","params":{nav}}}"#
+    ))
+    .map_err(|e| e.to_string())?;
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    loop {
+        if Instant::now() > deadline {
+            return Err("Sin respuesta del CDN (cuelgue).".into());
+        }
+        // Primero la cola acumulada por otras lecturas.
+        let queued: Vec<String> = std::mem::take(&mut *pending());
+        for text in queued {
+            if let Some(r) = cdp_response_for(&text, url) {
+                return Ok(r);
+            }
+        }
+        match ws.recv_text() {
+            Ok(text) => {
+                if let Some(r) = cdp_response_for(&text, url) {
+                    return Ok(r);
+                }
+            }
+            Err(_) => std::thread::sleep(Duration::from_millis(300)),
+        }
+    }
+}
+
+fn cdp_response_for(text: &str, url: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(text).ok()?;
+    if v.get("method").and_then(|x| x.as_str()) != Some("Network.responseReceived") {
+        return None;
+    }
+    let r = &v["params"]["response"];
+    if r.get("url").and_then(|x| x.as_str()) != Some(url) {
+        return None;
+    }
+    let st = r.get("status").and_then(|x| x.as_u64()).unwrap_or(0);
+    let mime = r
+        .get("mimeType")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let len = r
+        .get("headers")
+        .and_then(|h| {
+            h.get("content-length")
+                .or_else(|| h.get("Content-Length"))
+        })
+        .map(|x| {
+            if let Some(s) = x.as_str() {
+                s.to_string()
+            } else {
+                x.to_string()
+            }
+        })
+        .unwrap_or("?".to_string());
+    Some(format!("HTTP {st} {mime} len={len}"))
+}
+
 /// Nombres de cookies visibles por CDP (sin valores, solo inventario).
 pub fn cookie_names(port: u16) -> Result<Vec<String>, String> {
     let (mut ws, _) = page_ws(port, Instant::now() + Duration::from_secs(25))?;
