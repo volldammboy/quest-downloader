@@ -73,6 +73,7 @@ struct App {
     syncing: bool,
     linking: bool,
     bypass_500: bool,
+    pre_sync_owned: usize,
     plat_checked: bool,
     status: String,
     rx: mpsc::Receiver<AsyncMsg>,
@@ -112,6 +113,7 @@ impl App {
             syncing: false,
             linking: false,
             bypass_500: false,
+            pre_sync_owned: 0,
             plat_checked: false,
             status: String::new(),
             rx,
@@ -275,6 +277,7 @@ impl App {
         }
         self.syncing = true;
         self.bypass_500 = false;
+        self.pre_sync_owned = store::library_all().iter().filter(|g| g.owned).count();
         self.status = tr(&self.lang, "Sincronizando biblioteca…");
         let tx = self.tx.clone();
         let pid = std::process::id();
@@ -794,7 +797,21 @@ impl App {
                     if uid.starts_with("ERR:") {
                         crate::meta_auth::note("poll", &format!("sync ERR: {}", uid.chars().take(80).collect::<String>()));
                     }
-                    self.apply_sync(alias, uid, games)
+                    let n = games.len();
+                    let err = uid.starts_with("ERR:");
+                    self.apply_sync(alias, uid, games);
+                    // Sync parcial (primera página): completa solo vía pedidos.
+                    if !err && n > 0 {
+                        let pre = self.pre_sync_owned;
+                        if n < pre || (pre == 0 && n >= 9) {
+                            crate::meta_auth::note(
+                                "sync",
+                                &format!("parcial {n}/{pre}: encadenando pedidos"),
+                            );
+                            self.status = tr(&lang, "Sync parcial, completando vía web…");
+                            self.do_import_orders();
+                        }
+                    }
                 }
                 AsyncMsg::ImportProgress(games) => {
                     Self::insert_import_games(&games);
@@ -1230,6 +1247,7 @@ fn tr(lang: &str, es: &str) -> String {
         "Ya hay una descarga preparándose, espera…" => "A download is being prepared, wait…",
         "Descargando Rift…" => "Downloading Rift…",
         "Conectando con Meta…" => "Connecting to Meta…",
+        "Sync parcial, completando vía web…" => "Partial sync, completing via web…",
         "Rift descargado." => "Rift downloaded.",
         "Verificado:" => "Verified:",
         "Juegos importados:" => "Games imported:",
