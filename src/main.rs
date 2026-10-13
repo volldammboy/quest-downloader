@@ -400,7 +400,6 @@ impl App {
             store::set_setting("meta_user_id", &uid);
         }
         self.bypass_500 = false;
-        let mut seen = std::collections::HashSet::new();
         for g in &games {
             let game = store::Game {
                 id: g.id.clone(),
@@ -417,13 +416,9 @@ impl App {
             };
             store::library_add(&game);
             store::library_set_owned(&g.id, true);
-            seen.insert(g.id.clone());
         }
-        for old in store::library_all() {
-            if old.owned && !seen.contains(&old.id) {
-                store::library_set_owned(&old.id, false);
-            }
-        }
+        // Sin auto-desmarque: el sync es parcial (primera página) y
+        // desmarcaría juegos del bypass. Solo suma y confirma.
         // Enriquecer precio/tamaño desde el catálogo público.
         for g in games {
             let row = store::library_all()
@@ -2756,10 +2751,26 @@ fn main() -> eframe::Result<()> {
         }
         return Ok(());
     }
+    if std::env::args().any(|a| a == "--probe-lib") {
+        let out = (|| -> Result<(String, String, Vec<crate::meta_auth::LibGame>), String> {
+            let token = crate::meta_auth::profile_token()?;
+            crate::meta_auth::fetch_library(&token)
+        })();
+        match out {
+            Ok((alias, uid, games)) => {
+                println!("PROBE lib alias={alias} uid={uid} n={}", games.len());
+                for g in games.iter().take(12) {
+                    println!("  {} {}", g.id, g.name);
+                }
+            }
+            Err(e) => println!("PROBE lib ERR {e}"),
+        }
+        return Ok(());
+    }
     if std::env::args().any(|a| a == "--probe-page") {
         let out = (|| -> Result<serde_json::Value, String> {
             let token = crate::meta_auth::profile_token()?;
-            crate::meta_auth::query(&token, "4850747515044496", r#"{"first":5}"#, "pagina")
+            crate::meta_auth::query(&token, "4850747515044496", r#"{"first":200}"#, "pagina")
         })();
         match out {
             Ok(v) => {
