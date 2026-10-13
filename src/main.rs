@@ -792,7 +792,8 @@ impl App {
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
                 AsyncMsg::Search(r) => {
-                    self.results = r;
+                    // Sin Rift en la Tienda: solo Quest/descargables.
+                    self.results = r.into_iter().filter(|a| a.platform != "rift").collect();
                     self.searching = false;
                 }
                 AsyncMsg::Sync(alias, uid, games) => {
