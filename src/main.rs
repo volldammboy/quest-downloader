@@ -84,6 +84,7 @@ struct App {
     import_open: bool,
     import_text: String,
     confirm_del: bool,
+    confirm_del_all: bool,
     game_jobs: HashMap<String, Vec<String>>,
     account: String,
     dl_tex: Option<egui::TextureHandle>,
@@ -124,6 +125,7 @@ impl App {
             import_open: false,
             import_text: String::new(),
             confirm_del: false,
+            confirm_del_all: false,
             game_jobs: HashMap::new(),
             account: store::get_setting("meta_name"),
             dl_tex: load_ui_icon(
@@ -1204,6 +1206,9 @@ fn tr(lang: &str, es: &str) -> String {
         "Abrir carpeta de descargas" => "Open downloads folder",
         "Abrir carpeta" => "Open folder",
         "Eliminar" => "Delete",
+        "Eliminar ficha" => "Delete card",
+        "Eliminar biblioteca" => "Clear library",
+        "¿Vaciar la Biblioteca ({n} fichas)?" => "Clear the library ({n} cards)?",
         "Eliminar de la Biblioteca (Supr)" => "Delete from library (Del)",
         "Biblioteca" => "Library",
         "Tienda" => "Store",
@@ -1921,6 +1926,30 @@ impl eframe::App for App {
         });
 
         // Modales
+        if self.confirm_del_all {
+            let n = store::library_all().len();
+            egui::Window::new(tr(&lang, "Eliminar biblioteca"))
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.label(
+                        tr(&lang, "¿Vaciar la Biblioteca ({n} fichas)?")
+                            .replace("{n}", &n.to_string()),
+                    );
+                    ui.horizontal(|ui| {
+                        if ui.button(tr(&lang, "Eliminar biblioteca")).clicked() {
+                            store::library_clear();
+                            self.selected = None;
+                            self.refresh_library();
+                            self.confirm_del_all = false;
+                        }
+                        if ui.button(tr(&lang, "Cancelar")).clicked() {
+                            self.confirm_del_all = false;
+                        }
+                    });
+                });
+        }
         if self.confirm_del {
             let id = self.selected.clone().unwrap_or_default();
             let name = self
@@ -2170,8 +2199,11 @@ impl App {
             if ui.button(tr(&lang, "Actualizar Biblioteca")).clicked() {
                 self.do_sync();
             }
-            if ui.button(tr(&lang, "Eliminar")).clicked() {
+            if ui.button(tr(&lang, "Eliminar ficha")).clicked() {
                 self.confirm_del = true;
+            }
+            if ui.button(tr(&lang, "Eliminar biblioteca")).clicked() {
+                self.confirm_del_all = true;
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let libs = store::library_all();

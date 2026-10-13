@@ -272,3 +272,9 @@ pub fn library_remove(app_id: &str) {
         cx.execute("DELETE FROM library WHERE id=?", [app_id]).ok();
     }
 }
+
+pub fn library_clear() {
+    if let Ok(cx) = conn() {
+        cx.execute("DELETE FROM library", []).ok();
+    }
+}
