@@ -431,11 +431,21 @@ impl App {
             if let Ok(list) = oculusdb::search_store(&g.name, 10) {
                 if let Some(pick) = list.into_iter().find(|r| r.id == g.id) {
                     let mut full = row.unwrap();
-                    full.price = pick.price;
-                    full.size = pick.size;
-                    full.package = pick.package;
-                    full.publisher = pick.publisher;
-                    full.store_url = pick.store_url;
+                    if !pick.price.is_empty() {
+                        full.price = pick.price;
+                    }
+                    if !pick.size.is_empty() {
+                        full.size = pick.size;
+                    }
+                    if !pick.package.is_empty() {
+                        full.package = pick.package;
+                    }
+                    if !pick.publisher.is_empty() {
+                        full.publisher = pick.publisher;
+                    }
+                    if !pick.store_url.is_empty() {
+                        full.store_url = pick.store_url;
+                    }
                     full.info = serde_json::json!({
                         "genres": pick.genres, "image_url": pick.image_url,
                         "platform": pick.platform,
@@ -503,17 +513,30 @@ impl App {
                                 store::library_set_platform(&g.id, "quest");
                             }
                         }
-                        if g.price.is_empty() || g.package.is_empty() {
+                        if g.price.is_empty() || g.package.is_empty() || g.size.is_empty() {
                             if let Ok(list) = oculusdb::search_store(&g.name, 10) {
                                 if let Some(pick) =
                                     list.into_iter().find(|r| r.id == g.id)
                                 {
                                     let mut full = g.clone();
-                                    full.price = pick.price;
-                                    full.size = pick.size;
-                                    full.package = pick.package;
-                                    full.publisher = pick.publisher;
-                                    full.store_url = pick.store_url;
+                                    if !pick.price.is_empty() {
+                                        full.price = pick.price;
+                                    }
+                                    if !pick.size.is_empty() {
+                                        full.size = pick.size;
+                                    }
+                                    if full.size.is_empty() {
+                                        full.size = it.size.clone();
+                                    }
+                                    if !pick.package.is_empty() {
+                                        full.package = pick.package;
+                                    }
+                                    if !pick.publisher.is_empty() {
+                                        full.publisher = pick.publisher;
+                                    }
+                                    if !pick.store_url.is_empty() {
+                                        full.store_url = pick.store_url;
+                                    }
                                     full.art_url = if full.art_url.is_empty() {
                                         pick.image_url.clone()
                                     } else {

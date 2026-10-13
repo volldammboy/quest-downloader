@@ -118,6 +118,7 @@ pub struct OculusItem {
     pub binary: u64,
     pub name: String,
     pub bundle: Vec<String>,
+    pub size: String,
 }
 
 pub fn fetch_item(id: &str) -> Option<OculusItem> {
@@ -154,6 +155,12 @@ pub fn fetch_item(id: &str) -> Option<OculusItem> {
         binary: v.get("binaryType").and_then(|x| x.as_u64()).unwrap_or(0),
         name,
         bundle,
+        size: v
+            .get("requiredSpaceAdjustedFormatted")
+            .or_else(|| v.get("totalInstalledSpaceFormatted"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
     })
 }
 
