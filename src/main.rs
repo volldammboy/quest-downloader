@@ -2114,7 +2114,10 @@ impl App {
         let q = self.filter.to_lowercase();
         let mut libs: Vec<store::Game> = store::library_all()
             .into_iter()
-            .filter(|g| g.name.to_lowercase().contains(&q))
+            .filter(|g| {
+                g.name.to_lowercase().contains(&q)
+                    && game_platform(g) != "rift"
+            })
             .collect();
         libs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
         self.library = store::library_all();
