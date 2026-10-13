@@ -2170,13 +2170,6 @@ impl App {
             if ui.button(tr(&lang, "Actualizar Biblioteca")).clicked() {
                 self.do_sync();
             }
-            let imp_btn = ui.button(tr(&lang, "Importar pedidos"));
-            if imp_btn.clicked() {
-                self.do_import_orders();
-            }
-            if ui.button(tr(&lang, "Importar lista…")).clicked() {
-                self.import_open = true;
-            }
             if ui.button(tr(&lang, "Eliminar")).clicked() {
                 self.confirm_del = true;
             }
