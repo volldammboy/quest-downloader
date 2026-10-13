@@ -2191,12 +2191,17 @@ impl App {
                                 (tr(&lang, "Sin comprobar"), egui::Color32::GRAY)
                             };
                             let st_txt = format!(
-                                "{st}{}",
+                                "{st}{}{}",
                                 if apk_done {
                                     format!(" · {}", tr(&lang, "Descargado"))
                                 } else {
                                     String::new()
-                                }
+                                },
+                                if g.size.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!(" · {}", g.size)
+                                },
                             );
                             // Etiqueta PCVR arriba a la derecha.
                             if g.info.get("platform").and_then(|v| v.as_str()).unwrap_or("") == "rift" {
