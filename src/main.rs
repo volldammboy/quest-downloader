@@ -630,6 +630,39 @@ impl App {
                 "plataforma",
                 &format!("verificado xbuy: +{added}"),
             );
+            // 4) Peso exacto vía plan de Meta para los que siguen sin peso.
+            if let Ok(token) = crate::meta_auth::profile_token() {
+                let mut nsized = 0u32;
+                for g in store::library_all() {
+                    if !g.size.is_empty() {
+                        continue;
+                    }
+                    let plat = g
+                        .info
+                        .get("platform")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if plat == "rift" {
+                        continue;
+                    }
+                    if let Ok(plan) = crate::meta_auth::plan(&token, &g.id) {
+                        let total: u64 = plan
+                            .files
+                            .iter()
+                            .chain(plan.optional.iter())
+                            .map(|f| f.size)
+                            .sum();
+                        if total > 0 {
+                            let mut full = g.clone();
+                            full.size = crate::mb(total);
+                            store::library_add(&full);
+                            nsized += 1;
+                        }
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                }
+                crate::meta_auth::note("plataforma", &format!("pesos via plan: +{nsized}"));
+            }
             let _ = lang;
             tx.send(AsyncMsg::PlatformDone((added, removed))).ok();
         });
