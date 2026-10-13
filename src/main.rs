@@ -495,15 +495,50 @@ impl App {
                     added += 1;
                 }
             }
-            // 2) Plataforma de lo listado (los Rift se quedan con etiqueta PCVR).
+            // 2) Plataforma y detalles de lo listado (precio, tamaño, paquete, géneros).
             for g in store::library_all() {
                 let plat = g.info.get("platform").and_then(|v| v.as_str()).unwrap_or("");
-                if plat.is_empty() {
+                let needs = plat.is_empty() || g.price.is_empty() || g.package.is_empty();
+                if needs {
                     if let Some(it) = oculusdb::fetch_item(&g.id) {
-                        if it.binary == 2 {
-                            store::library_set_platform(&g.id, "rift");
-                        } else if it.otype == "Application" {
-                            store::library_set_platform(&g.id, "quest");
+                        if plat.is_empty() {
+                            if it.binary == 2 {
+                                store::library_set_platform(&g.id, "rift");
+                            } else if it.otype == "Application" {
+                                store::library_set_platform(&g.id, "quest");
+                            }
+                        }
+                        if g.price.is_empty() || g.package.is_empty() {
+                            if let Ok(list) = oculusdb::search_store(&g.name, 10) {
+                                if let Some(pick) =
+                                    list.into_iter().find(|r| r.id == g.id)
+                                {
+                                    let mut full = g.clone();
+                                    full.price = pick.price;
+                                    full.size = pick.size;
+                                    full.package = pick.package;
+                                    full.publisher = pick.publisher;
+                                    full.store_url = pick.store_url;
+                                    full.art_url = if full.art_url.is_empty() {
+                                        pick.image_url.clone()
+                                    } else {
+                                        full.art_url.clone()
+                                    };
+                                    full.info = serde_json::json!({
+                                        "genres": pick.genres, "image_url": pick.image_url,
+                                        "platform": full.info.get("platform").and_then(|v| v.as_str()).unwrap_or(""),
+                                    });
+                                    if let Some(row) = store::library_all()
+                                        .into_iter()
+                                        .find(|r| r.id == g.id)
+                                    {
+                                        full.info["platform"] = serde_json::json!(
+                                            row.info.get("platform").and_then(|v| v.as_str()).unwrap_or("")
+                                        );
+                                    }
+                                    store::library_add(&full);
+                                }
+                            }
                         }
                     }
                     std::thread::sleep(std::time::Duration::from_millis(150));
