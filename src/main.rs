@@ -48,6 +48,14 @@ enum AsyncMsg {
     PlatformDone((u32, u32)),
 }
 
+fn game_platform(g: &store::Game) -> String {
+    g.info
+        .get("platform")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
 fn norm_name(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
@@ -140,7 +148,11 @@ impl App {
     }
 
     fn refresh_library(&mut self) {
-        self.library = store::library_all();
+        // Sin PCVR: ni fichas ni descargas (el gemelo Quest, si existe, sigue).
+        self.library = store::library_all()
+            .into_iter()
+            .filter(|g| game_platform(g) != "rift")
+            .collect();
     }
 
     fn selected_game(&self) -> Option<store::Game> {
@@ -151,7 +163,10 @@ impl App {
 
     fn ensure_covers(&self) {
         let tx = self.tx.clone();
-        let games = store::library_all();
+        let games = store::library_all()
+            .into_iter()
+            .filter(|g| game_platform(g) != "rift")
+            .collect::<Vec<_>>();
         std::thread::spawn(move || {
             for g in games {
                 let dest = store::covers_dir().join(format!("{}.jpg", g.id));
