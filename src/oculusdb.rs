@@ -94,7 +94,11 @@ pub fn search_store(query: &str, limit: usize) -> Result<Vec<StoreApp>, String> 
             },
             size: {
                 let z = s(a.get("requiredSpaceAdjustedFormatted"));
-                if z.is_empty() { "?".into() } else { z }
+                if z.is_empty() || z.starts_with('-') || z == "?" {
+                    String::new()
+                } else {
+                    z
+                }
             },
             publisher: s(a.get("publisher_name")),
             genres,
@@ -155,12 +159,19 @@ pub fn fetch_item(id: &str) -> Option<OculusItem> {
         binary: v.get("binaryType").and_then(|x| x.as_u64()).unwrap_or(0),
         name,
         bundle,
-        size: v
-            .get("requiredSpaceAdjustedFormatted")
-            .or_else(|| v.get("totalInstalledSpaceFormatted"))
-            .and_then(|x| x.as_str())
-            .unwrap_or("")
-            .to_string(),
+        size: {
+            let raw = v
+                .get("requiredSpaceAdjustedFormatted")
+                .or_else(|| v.get("totalInstalledSpaceFormatted"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            if raw.is_empty() || raw.starts_with('-') || raw == "?" {
+                String::new()
+            } else {
+                raw
+            }
+        },
     })
 }
 
